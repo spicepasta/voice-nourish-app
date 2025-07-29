@@ -69,6 +69,10 @@ export default {
 				'butler-parchment': 'hsl(var(--butler-parchment))',
 				'butler-charcoal': 'hsl(var(--butler-charcoal))'
 			},
+			fontFamily: {
+				heading: ['Cormorant Garamond', 'serif'],
+				body: ['Inter', 'sans-serif'],
+			},
 			borderRadius: {
 				lg: 'var(--radius)',
 				md: 'calc(var(--radius) - 2px)',
