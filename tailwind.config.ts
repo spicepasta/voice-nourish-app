@@ -61,7 +61,13 @@ export default {
 					'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
 					border: 'hsl(var(--sidebar-border))',
 					ring: 'hsl(var(--sidebar-ring))'
-				}
+				},
+				// Butler-themed colors
+				'butler-gold': 'hsl(var(--butler-gold))',
+				'butler-navy': 'hsl(var(--butler-navy))',
+				'butler-cream': 'hsl(var(--butler-cream))',
+				'butler-parchment': 'hsl(var(--butler-parchment))',
+				'butler-charcoal': 'hsl(var(--butler-charcoal))'
 			},
 			borderRadius: {
 				lg: 'var(--radius)',
