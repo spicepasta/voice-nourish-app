@@ -141,9 +141,10 @@ All colors MUST be HSL.
 @layer components {
   /* Butler-themed button variants */
   .btn-butler {
-    @apply bg-gradient-to-r from-primary to-butler-gold text-primary-foreground shadow-elegant;
+    @apply bg-gradient-to-r from-primary to-butler-gold text-primary-foreground;
     @apply hover:shadow-lg transition-all duration-300;
     @apply border border-primary/20;
+    box-shadow: var(--shadow-elegant);
   }
   
   .btn-butler-outline {
