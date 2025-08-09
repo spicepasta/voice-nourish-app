@@ -3,7 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
+import * as Recharts from 'recharts';
 import { Mic, Plus, History, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
@@ -11,6 +11,8 @@ import { useToast } from '@/components/ui/use-toast';
 import RecordingModal from '@/components/RecordingModal';
 import ConfirmationModal from '@/components/ConfirmationModal';
 import MealCard from '@/components/MealCard';
+
+// --- Type Definitions ---
 
 interface DayData {
   calories: number;
@@ -33,10 +35,14 @@ interface Meal {
   logged_at: string;
 }
 
+// --- Dashboard Component ---
+
 const Dashboard = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  
+  // --- State Management ---
   const [dayData, setDayData] = useState<DayData>({ calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
   const [meals, setMeals] = useState<Meal[]>([]);
   const [manualEntry, setManualEntry] = useState('');
@@ -45,22 +51,14 @@ const Dashboard = () => {
   const [analyzedItems, setAnalyzedItems] = useState<any[] | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    const name = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'esteemed guest';
-    
-    if (hour < 12) return `Good morning, ${name}`;
-    if (hour < 17) return `Good afternoon, ${name}`;
-    return `Good evening, ${name}`;
-  };
-
+  // --- Data Fetching ---
   const loadTodayData = async () => {
     if (!user) return;
     
     try {
       const today = new Date().toISOString().split('T')[0];
       
-      const { data: meals, error } = await supabase
+      const { data: mealsData, error } = await supabase
         .from('meals')
         .select('*')
         .eq('user_id', user.id)
@@ -69,10 +67,9 @@ const Dashboard = () => {
 
       if (error) throw error;
 
-      setMeals(meals || []);
+      setMeals(mealsData || []);
       
-      // Calculate totals
-      const totals = meals?.reduce((acc, meal) => ({
+      const totals = mealsData?.reduce((acc, meal) => ({
         calories: acc.calories + (Number(meal.total_calories) || 0),
         protein: acc.protein + (Number(meal.protein) || 0),
         carbs: acc.carbs + (Number(meal.carbs) || 0),
@@ -89,8 +86,20 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-    loadTodayData();
+    if (user) {
+      loadTodayData();
+    }
   }, [user]);
+
+  // --- Event Handlers ---
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    const name = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'esteemed guest';
+    
+    if (hour < 12) return `Good morning, ${name}`;
+    if (hour < 17) return `Good afternoon, ${name}`;
+    return `Good evening, ${name}`;
+  };
 
   const handleRecordingComplete = (result: { items: any[] }) => {
     setAnalyzedItems(result.items || []);
@@ -98,8 +107,9 @@ const Dashboard = () => {
     setShowConfirmation(true);
   };
 
-  const handleMealConfirmed = async (mealData: any) => {
+  const handleMealConfirmed = async () => {
     setShowConfirmation(false);
+    setAnalyzedItems(null);
     await loadTodayData(); // Refresh data
     toast({
       title: "Meal recorded with distinction",
@@ -115,12 +125,14 @@ const Dashboard = () => {
     }
   };
 
+  // --- Chart Data ---
   const pieData = [
     { name: 'Protein', value: Math.round(dayData.protein * 4), color: 'hsl(var(--chart-1))' },
     { name: 'Carbs', value: Math.round(dayData.carbs * 4), color: 'hsl(var(--chart-2))' },
     { name: 'Fat', value: Math.round(dayData.fat * 9), color: 'hsl(var(--chart-3))' }
   ].filter(item => item.value > 0);
 
+  // --- Render Logic ---
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-butler-parchment">
@@ -134,28 +146,34 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-butler-parchment">
-      <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-butler-heading text-2xl font-bold text-primary">Sir Dinewell</h1>
-            <p className="text-sm text-muted-foreground">{getGreeting()}</p>
+      {/* --- Header --- */}
+      <header className="sticky top-0 z-10 border-b border-border/50 bg-card/80 backdrop-blur-sm">
+        <div className="container mx-auto px-4 sm:px-6 py-3 flex justify-between items-center">
+          <div className="flex flex-col">
+             <div className="flex items-baseline gap-x-2">
+                <h1 className="text-butler-heading text-xl sm:text-2xl font-bold text-primary">Sir</h1>
+                <h1 className="text-butler-heading text-xl sm:text-2xl font-bold text-primary">Dinewell</h1>
+              </div>
+            <p className="text-xs sm:text-sm text-muted-foreground whitespace-nowrap">{getGreeting()}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-1 sm:gap-2">
             <Button variant="outline" size="sm" onClick={() => navigate('/history')}>
-              <History className="w-4 h-4 mr-2" />
-              The Ledger
+              <History className="w-4 h-4 md:mr-2" />
+              <span className="hidden md:inline">The Ledger</span>
             </Button>
             <Button variant="ghost" size="sm" onClick={signOut}>
-              <User className="w-4 h-4 mr-2" />
-              Sign Out
+              <User className="w-4 h-4 md:mr-2" />
+               <span className="hidden md:inline">Sign Out</span>
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-          {/* Macro Chart */}
+      {/* --- Main Content --- */}
+      <main className="container mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8 mb-8">
+          
+          {/* --- Macro Chart Card --- */}
           <Card className="card-butler hover-elevate">
             <CardHeader className="text-center">
               <CardTitle className="text-butler-heading">Today's Nutritional Summary</CardTitle>
@@ -169,28 +187,28 @@ const Dashboard = () => {
             <CardContent>
               {pieData.length > 0 ? (
                 <div className="h-56 sm:h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
+                  <Recharts.ResponsiveContainer width="100%" height="100%">
+                    <Recharts.PieChart>
+                      <Recharts.Pie
                         data={pieData}
                         dataKey="value"
                         nameKey="name"
                         cx="50%"
                         cy="50%"
-                        outerRadius={80}
-                        innerRadius={40}
+                        outerRadius="80%"
+                        innerRadius="50%"
                       >
                         {pieData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
+                          <Recharts.Cell key={`cell-${index}`} fill={entry.color} />
                         ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => [`${value} cal`, '']} />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
+                      </Recharts.Pie>
+                      <Recharts.Tooltip formatter={(value: number) => [`${value} cal`, '']} />
+                      <Recharts.Legend />
+                    </Recharts.PieChart>
+                  </Recharts.ResponsiveContainer>
                 </div>
               ) : (
-                <div className="h-64 flex items-center justify-center text-muted-foreground">
+                <div className="h-56 sm:h-64 flex items-center justify-center text-muted-foreground">
                   <div className="text-center">
                     <div className="w-16 h-16 border-2 border-dashed border-muted-foreground/30 rounded-full mx-auto mb-4 flex items-center justify-center">
                       <Plus className="w-8 h-8" />
@@ -202,15 +220,15 @@ const Dashboard = () => {
             </CardContent>
           </Card>
 
-          {/* Recording Interface */}
+          {/* --- Recording Card --- */}
           <Card className="card-butler">
             <CardHeader>
               <CardTitle className="text-butler-heading">Record Your Meal</CardTitle>
               <CardDescription>
-                Please describe your culinary experience, and I shall document it with care
+                Please describe your culinary experience
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 flex flex-col justify-center h-full pb-6">
               <Button 
                 onClick={() => setIsRecording(true)}
                 className="w-full h-20 text-lg btn-butler hover-elevate"
@@ -234,7 +252,7 @@ const Dashboard = () => {
                   value={manualEntry}
                   onChange={(e) => setManualEntry(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleManualEntry()}
-                  className="flex-1 w-full"
+                  className="flex-1"
                 />
                 <Button onClick={handleManualEntry} disabled={!manualEntry.trim()} className="w-full sm:w-auto">
                   <Plus className="w-4 h-4" />
@@ -244,7 +262,7 @@ const Dashboard = () => {
           </Card>
         </div>
 
-        {/* Today's Meals */}
+        {/* --- Today's Meals List --- */}
         {meals.length > 0 && (
           <div>
             <h2 className="text-butler-heading text-xl font-semibold mb-4">
@@ -259,6 +277,7 @@ const Dashboard = () => {
         )}
       </main>
 
+      {/* --- Modals --- */}
       <RecordingModal
         isOpen={isRecording}
         onClose={() => setIsRecording(false)}
