@@ -209,23 +209,25 @@ const ConfirmationModal = ({ isOpen, onClose, items, onConfirm }: ConfirmationMo
 
           <Separator />
 
-          <div className="flex gap-2 pt-2">
-            <Button variant="outline" onClick={onClose} disabled={loading} className="flex-1">
-              Allow me to reconsider
-            </Button>
-            <Button onClick={handleConfirm} disabled={loading || editItems.some(it => !it.n?.trim())} className="flex-1 btn-butler">
-              {loading ? (
-                <>
-                  <div className="animate-spin w-4 h-4 mr-2 border-2 border-primary-foreground border-t-transparent rounded-full"></div>
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Check className="w-4 h-4 mr-2" />
-                  Confirm & Record
-                </>
-              )}
-            </Button>
+          <div className="sticky bottom-0 left-0 right-0 bg-card/95 supports-[backdrop-filter]:bg-card/80 backdrop-blur border-t border-border pt-2 pb-[env(safe-area-inset-bottom)]">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button variant="outline" onClick={onClose} disabled={loading} className="w-full sm:flex-1">
+                Allow me to reconsider
+              </Button>
+              <Button onClick={handleConfirm} disabled={loading || editItems.some(it => !it.n?.trim())} className="w-full sm:flex-1 btn-butler">
+                {loading ? (
+                  <>
+                    <div className="animate-spin w-4 h-4 mr-2 border-2 border-primary-foreground border-t-transparent rounded-full"></div>
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4 mr-2" />
+                    Confirm & Record
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>

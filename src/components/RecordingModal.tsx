@@ -108,7 +108,7 @@ const processAudio = async (audioBlob: Blob) => {
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-sm w-[92vw] sm:max-w-md">
+      <DialogContent className="max-w-sm w-[92vw] sm:max-w-md pb-[env(safe-area-inset-bottom)]">
         <DialogHeader>
           <DialogTitle className="text-butler-heading text-center">
             At Your Leisure
@@ -121,7 +121,7 @@ const processAudio = async (audioBlob: Blob) => {
         <div className="flex flex-col items-center space-y-6 py-6">
           {isProcessing ? (
             <>
-              <div className="w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center">
+              <div className="w-28 h-28 sm:w-24 sm:h-24 rounded-full bg-primary/10 flex items-center justify-center">
                 <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full"></div>
               </div>
               <p className="text-muted-foreground text-center">
@@ -131,7 +131,7 @@ const processAudio = async (audioBlob: Blob) => {
           ) : (
             <>
               <div 
-                className={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 ${
+                className={`w-28 h-28 sm:w-24 sm:h-24 rounded-full flex items-center justify-center transition-all duration-300 ${
                   isRecording 
                     ? 'bg-destructive recording-pulse' 
                     : 'bg-primary hover:bg-primary/90 hover-elevate cursor-pointer'

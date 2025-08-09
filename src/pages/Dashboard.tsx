@@ -168,7 +168,7 @@ const Dashboard = () => {
             </CardHeader>
             <CardContent>
               {pieData.length > 0 ? (
-                <div className="h-64">
+                <div className="h-56 sm:h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
@@ -228,15 +228,15 @@ const Dashboard = () => {
                 </div>
               </div>
               
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <Input
                   placeholder="A written note, if you prefer..."
                   value={manualEntry}
                   onChange={(e) => setManualEntry(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleManualEntry()}
-                  className="flex-1"
+                  className="flex-1 w-full"
                 />
-                <Button onClick={handleManualEntry} disabled={!manualEntry.trim()}>
+                <Button onClick={handleManualEntry} disabled={!manualEntry.trim()} className="w-full sm:w-auto">
                   <Plus className="w-4 h-4" />
                 </Button>
               </div>
