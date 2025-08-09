@@ -42,7 +42,7 @@ const Dashboard = () => {
   const [manualEntry, setManualEntry] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
-  const [transcribedText, setTranscribedText] = useState('');
+  const [analyzedItems, setAnalyzedItems] = useState<any[] | null>(null);
   const [loading, setLoading] = useState(true);
 
   const getGreeting = () => {
@@ -92,8 +92,8 @@ const Dashboard = () => {
     loadTodayData();
   }, [user]);
 
-  const handleRecordingComplete = (text: string) => {
-    setTranscribedText(text);
+  const handleRecordingComplete = (result: { items: any[] }) => {
+    setAnalyzedItems(result.items || []);
     setIsRecording(false);
     setShowConfirmation(true);
   };
@@ -109,7 +109,7 @@ const Dashboard = () => {
 
   const handleManualEntry = () => {
     if (manualEntry.trim()) {
-      setTranscribedText(manualEntry);
+      setAnalyzedItems([{ qty: '1 serving', n: manualEntry.trim() }]);
       setShowConfirmation(true);
       setManualEntry('');
     }
@@ -268,7 +268,7 @@ const Dashboard = () => {
       <ConfirmationModal
         isOpen={showConfirmation}
         onClose={() => setShowConfirmation(false)}
-        transcribedText={transcribedText}
+        items={analyzedItems || []}
         onConfirm={handleMealConfirmed}
       />
     </div>

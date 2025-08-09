@@ -3,11 +3,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button';
 import { Mic, MicOff, Square } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
 interface RecordingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onRecordingComplete: (text: string) => void;
+  onRecordingComplete: (result: { items: any[] }) => void;
 }
 
 const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModalProps) => {
@@ -58,33 +59,45 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
     }
   };
 
-  const processAudio = async (audioBlob: Blob) => {
-    try {
-      // Convert blob to base64
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64Audio = (reader.result as string).split(',')[1];
-        
-        // TODO: Call transcription edge function
-        // For now, simulate the transcription
-        setTimeout(() => {
-          const mockTranscription = "Two slices of whole grain toast with avocado and a scrambled egg";
-          onRecordingComplete(mockTranscription);
-          setIsProcessing(false);
-          onClose();
-        }, 2000);
-      };
-      reader.readAsDataURL(audioBlob);
-    } catch (error) {
-      console.error('Error processing audio:', error);
-      toast({
-        variant: "destructive",
-        title: "Processing Error",
-        description: "Unable to process your recording. Please try again."
-      });
-      setIsProcessing(false);
+const processAudio = async (audioBlob: Blob) => {
+  try {
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'audio.webm');
+
+    const { data: { session } } = await supabase.auth.getSession();
+
+    const resp = await fetch('https://flrnybizzmjhsdmyyiez.supabase.co/functions/v1/transcribe-and-analyze', {
+      method: 'POST',
+      headers: {
+        Authorization: session?.access_token ? `Bearer ${session.access_token}` : '',
+        apikey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZscm55Yml6em1qaHNkbXl5aWV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM3MzU3NjIsImV4cCI6MjA2OTMxMTc2Mn0.aVaSG1X2N33iWQbUM6ZbXtgzn38A01xDFYFfbRpIqsI',
+      },
+      body: formData,
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(txt || 'Edge function error');
     }
-  };
+
+    const result = await resp.json();
+    if (!result || !Array.isArray(result.items)) {
+      throw new Error('Invalid response from transcription service');
+    }
+
+    onRecordingComplete(result);
+    setIsProcessing(false);
+    onClose();
+  } catch (error) {
+    console.error('Error processing audio:', error);
+    toast({
+      variant: 'destructive',
+      title: 'Processing Error',
+      description: 'Unable to process your recording. Please try again.',
+    });
+    setIsProcessing(false);
+  }
+};
 
   const handleClose = () => {
     if (isRecording) {
@@ -95,7 +108,7 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-w-sm w-[92vw] sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-butler-heading text-center">
             At Your Leisure
