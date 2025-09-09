@@ -74,9 +74,9 @@ serve(async (req) => {
       });
     } catch (error) {
        if (error.status === 401) {
-        return createErrorResponse("Invalid OpenAI API key", "The provided key is incorrect or expired. Please check your Edge Function secrets.", 401);
-      }
-      return createErrorResponse("Transcription failed", error.message || "Failed to transcribe audio with OpenAI.", 500);
+         return createErrorResponse("Invalid OpenAI API key", "The provided key is incorrect or expired. Please check your Edge Function secrets.", 401);
+       }
+       return createErrorResponse("Transcription failed", error.message || "Failed to transcribe audio with OpenAI.", 500);
     }
     
     const transcribedText: string = (transcription as any).text || "";
@@ -171,3 +171,4 @@ serve(async (req) => {
     return createErrorResponse("An unexpected error occurred", error.message, 500);
   }
 });
+
