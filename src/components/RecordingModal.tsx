@@ -70,14 +70,9 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
       });
 
       if (error) {
-        // Attempt to parse a detailed error message from the function
-        try {
-          const errorBody = JSON.parse(error.message);
-          throw new Error(errorBody.details || errorBody.error || 'Edge function error');
-        } catch (e) {
-          // Fallback to the original error message if it's not JSON
-          throw new Error(error.message || 'Edge function error');
-        }
+        // The invoke method returns an error object. We throw it to be caught below.
+        console.error("Supabase function invocation error:", error);
+        throw error;
       }
 
       if (!result || !Array.isArray(result.items)) {
@@ -95,7 +90,7 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
       toast({
         variant: 'destructive',
         title: 'Transcription Failed',
-        description: errorMessage,
+        description: `Details: ${errorMessage}`,
       });
     } finally {
       setIsProcessing(false);
