@@ -19,7 +19,26 @@ serve(async (req) => {
   try {
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     if (!OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is not set");
+      console.error("OpenAI API key is not configured");
+      return new Response(JSON.stringify({ 
+        error: "OpenAI API key not configured",
+        details: "Please add your OpenAI API key to the Edge Function secrets" 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Basic API key format validation
+    if (!OPENAI_API_KEY.startsWith("sk-")) {
+      console.error("Invalid OpenAI API key format");
+      return new Response(JSON.stringify({ 
+        error: "Invalid API key format",
+        details: "OpenAI API keys should start with 'sk-'" 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -27,7 +46,10 @@ serve(async (req) => {
     // We expect multipart/form-data with a 'file' field (audio/webm)
     const contentType = req.headers.get("content-type") || "";
     if (!contentType.includes("multipart/form-data")) {
-      return new Response(JSON.stringify({ error: "Expected multipart/form-data with a 'file' field" }), {
+      return new Response(JSON.stringify({ 
+        error: "Invalid content type", 
+        details: "Expected multipart/form-data with a 'file' field" 
+      }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -46,13 +68,37 @@ serve(async (req) => {
     // Step 1: Transcription with Whisper
     const audioFile = new File([file], "audio.webm", { type: "audio/webm" });
 
-    const transcription = await openai.audio.transcriptions.create({
-      file: audioFile,
-      model: "whisper-1",
-      // You can pass language hints if desired: language: "en"
-    });
+    let transcription;
+    try {
+      transcription = await openai.audio.transcriptions.create({
+        file: audioFile,
+        model: "whisper-1",
+        // You can pass language hints if desired: language: "en"
+      });
+    } catch (openaiError: any) {
+      console.error("OpenAI Transcription API Error:", openaiError);
+      
+      if (openaiError.status === 401) {
+        return new Response(JSON.stringify({ 
+          error: "Invalid OpenAI API key",
+          details: "The provided OpenAI API key is incorrect or expired. Please check your API key in the Edge Function secrets." 
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      
+      return new Response(JSON.stringify({ 
+        error: "Transcription failed",
+        details: openaiError.message || "Failed to transcribe audio" 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const transcribedText: string = (transcription as any).text || "";
+    console.log("Transcribed text:", transcribedText);
 
     // Step 2: Analysis & Structuring with Chat Completions
     // Strict system prompt to ensure token-optimized schema and JSON-only output
@@ -84,16 +130,39 @@ Rules:
 
     const userPrompt = `Transcribed meal description:\n\n${transcribedText}`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      // Enforce JSON output
-      response_format: { type: "json_object" } as any,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.2,
-    });
+    let completion;
+    try {
+      completion = await openai.chat.completions.create({
+        model: "gpt-4o",
+        // Enforce JSON output
+        response_format: { type: "json_object" } as any,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.2,
+      });
+    } catch (openaiError: any) {
+      console.error("OpenAI Chat API Error:", openaiError);
+      
+      if (openaiError.status === 401) {
+        return new Response(JSON.stringify({ 
+          error: "Invalid OpenAI API key",
+          details: "The provided OpenAI API key is incorrect or expired. Please check your API key in the Edge Function secrets." 
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      
+      return new Response(JSON.stringify({ 
+        error: "Meal analysis failed",
+        details: openaiError.message || "Failed to analyze transcribed meal" 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const raw = completion.choices?.[0]?.message?.content || "{" + '"items"' + ": []}";
 

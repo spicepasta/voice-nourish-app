@@ -76,7 +76,19 @@ const processAudio = async (audioBlob: Blob) => {
     });
 
     if (!resp.ok) {
-      const txt = await resp.text();
+      const errorData = await resp.json().catch(() => ({}));
+      
+      // Handle specific API key errors
+      if (errorData.error === 'Invalid OpenAI API key' || errorData.error === 'OpenAI API key not configured') {
+        throw new Error(`Configuration Error: ${errorData.details || errorData.error}`);
+      }
+      
+      // Handle other specific errors
+      if (errorData.error && errorData.details) {
+        throw new Error(`${errorData.error}: ${errorData.details}`);
+      }
+      
+      const txt = await resp.text().catch(() => 'Unknown error');
       throw new Error(txt || 'Edge function error');
     }
 
@@ -85,15 +97,33 @@ const processAudio = async (audioBlob: Blob) => {
       throw new Error('Invalid response from transcription service');
     }
 
+    console.log('Transcription result:', result);
     onRecordingComplete(result);
     setIsProcessing(false);
     onClose();
   } catch (error) {
     console.error('Error processing audio:', error);
+    
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    let title = 'Processing Error';
+    let description = 'Unable to process your recording. Please try again.';
+    
+    // Provide more specific error messages
+    if (errorMessage.includes('Configuration Error')) {
+      title = 'API Configuration Error';
+      description = errorMessage.replace('Configuration Error: ', '');
+    } else if (errorMessage.includes('Invalid OpenAI API key')) {
+      title = 'Invalid API Key';
+      description = 'The OpenAI API key is invalid. Please check the configuration.';
+    } else if (errorMessage.includes('Transcription failed')) {
+      title = 'Transcription Failed';
+      description = 'Failed to transcribe your audio. Please speak clearly and try again.';
+    }
+    
     toast({
       variant: 'destructive',
-      title: 'Processing Error',
-      description: 'Unable to process your recording. Please try again.',
+      title,
+      description,
     });
     setIsProcessing(false);
   }
