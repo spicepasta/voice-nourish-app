@@ -1,8 +1,8 @@
 import { useState, useRef } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Mic, MicOff, Square } from 'lucide-react';
-import { useToast } from '@/components/ui/use-toast';
+import { Mic, Square } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 
 interface RecordingModalProps {
@@ -15,27 +15,26 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const audioChunksRef = useRef<Blob[]>([]);
   const { toast } = useToast();
 
   const startRecording = async () => {
+    if (isRecording) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       mediaRecorderRef.current = mediaRecorder;
-      chunksRef.current = [];
+      audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          chunksRef.current.push(event.data);
+          audioChunksRef.current.push(event.data);
         }
       };
 
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        await processAudio(audioBlob);
-        
-        // Stop all tracks to release the microphone
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        processAudio(audioBlob);
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -45,8 +44,8 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
       console.error('Error starting recording:', error);
       toast({
         variant: "destructive",
-        title: "Recording Error",
-        description: "Unable to access microphone. Please check your permissions."
+        title: "Microphone Error",
+        description: "Could not access the microphone. Please check your browser permissions."
       });
     }
   };
@@ -59,80 +58,56 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
     }
   };
 
-const processAudio = async (audioBlob: Blob) => {
-  try {
-    const formData = new FormData();
-    formData.append('file', audioBlob, 'audio.webm');
+  const processAudio = async (audioBlob: Blob) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'audio.webm');
 
-    const { data: { session } } = await supabase.auth.getSession();
+      // Use the official Supabase client to invoke the edge function
+      // This handles authentication and content-type headers correctly.
+      const { data: result, error } = await supabase.functions.invoke('transcribe-and-analyze', {
+        body: formData,
+      });
 
-    const resp = await fetch('https://flrnybizzmjhsdmyyiez.supabase.co/functions/v1/transcribe-and-analyze', {
-      method: 'POST',
-      headers: {
-        Authorization: session?.access_token ? `Bearer ${session.access_token}` : '',
-        apikey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZscm55Yml6em1qaHNkbXl5aWV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM3MzU3NjIsImV4cCI6MjA2OTMxMTc2Mn0.aVaSG1X2N33iWQbUM6ZbXtgzn38A01xDFYFfbRpIqsI',
-      },
-      body: formData,
-    });
-
-    if (!resp.ok) {
-      const errorData = await resp.json().catch(() => ({}));
-      
-      // Handle specific API key errors
-      if (errorData.error === 'Invalid OpenAI API key' || errorData.error === 'OpenAI API key not configured') {
-        throw new Error(`Configuration Error: ${errorData.details || errorData.error}`);
+      if (error) {
+        // Attempt to parse a detailed error message from the function
+        try {
+          const errorBody = JSON.parse(error.message);
+          throw new Error(errorBody.details || errorBody.error || 'Edge function error');
+        } catch (e) {
+          // Fallback to the original error message if it's not JSON
+          throw new Error(error.message || 'Edge function error');
+        }
       }
-      
-      // Handle other specific errors
-      if (errorData.error && errorData.details) {
-        throw new Error(`${errorData.error}: ${errorData.details}`);
+
+      if (!result || !Array.isArray(result.items)) {
+        throw new Error('Invalid response structure from the transcription service.');
       }
+
+      console.log('Transcription result:', result);
+      onRecordingComplete(result);
+      onClose(); // Close modal on success
+
+    } catch (error) {
+      console.error('Error processing audio:', error);
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
       
-      const txt = await resp.text().catch(() => 'Unknown error');
-      throw new Error(txt || 'Edge function error');
+      toast({
+        variant: 'destructive',
+        title: 'Transcription Failed',
+        description: errorMessage,
+      });
+    } finally {
+      setIsProcessing(false);
     }
-
-    const result = await resp.json();
-    if (!result || !Array.isArray(result.items)) {
-      throw new Error('Invalid response from transcription service');
-    }
-
-    console.log('Transcription result:', result);
-    onRecordingComplete(result);
-    setIsProcessing(false);
-    onClose();
-  } catch (error) {
-    console.error('Error processing audio:', error);
-    
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    let title = 'Processing Error';
-    let description = 'Unable to process your recording. Please try again.';
-    
-    // Provide more specific error messages
-    if (errorMessage.includes('Configuration Error')) {
-      title = 'API Configuration Error';
-      description = errorMessage.replace('Configuration Error: ', '');
-    } else if (errorMessage.includes('Invalid OpenAI API key')) {
-      title = 'Invalid API Key';
-      description = 'The OpenAI API key is invalid. Please check the configuration.';
-    } else if (errorMessage.includes('Transcription failed')) {
-      title = 'Transcription Failed';
-      description = 'Failed to transcribe your audio. Please speak clearly and try again.';
-    }
-    
-    toast({
-      variant: 'destructive',
-      title,
-      description,
-    });
-    setIsProcessing(false);
-  }
-};
+  };
 
   const handleClose = () => {
     if (isRecording) {
-      stopRecording();
+      mediaRecorderRef.current?.stop();
+      setIsRecording(false);
     }
+    setIsProcessing(false);
     onClose();
   };
 
@@ -198,3 +173,4 @@ const processAudio = async (audioBlob: Blob) => {
 };
 
 export default RecordingModal;
+
