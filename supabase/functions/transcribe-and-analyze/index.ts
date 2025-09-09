@@ -1,212 +1,173 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import OpenAI from "https://deno.land/x/openai/mod.ts";
 
+// Define CORS headers for handling cross-origin requests
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Known macro keys for validation/cleanup
+// A set of known, expected keys in the final JSON output for validation.
 const KNOWN_KEYS = new Set(["qty", "n", "cal", "p", "c", "f", "fib"]);
 
+/**
+ * A helper function to create a standardized JSON error response.
+ * @param {string} error - The primary error message.
+ * @param {string} details - More specific details about the error.
+ * @param {number} status - The HTTP status code.
+ * @returns {Response} A Deno Response object.
+ */
+function createErrorResponse(error: string, details: string, status: number): Response {
+  console.error(`Error ${status}: ${error} - ${details}`);
+  return new Response(JSON.stringify({ error, details }), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+// --- Main Server Function ---
 serve(async (req) => {
-  // CORS preflight
+  // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
+    // 1. --- API Key and Client Initialization ---
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     if (!OPENAI_API_KEY) {
-      console.error("OpenAI API key is not configured");
-      return new Response(JSON.stringify({ 
-        error: "OpenAI API key not configured",
-        details: "Please add your OpenAI API key to the Edge Function secrets" 
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return createErrorResponse(
+        "OpenAI API key not configured",
+        "Please add your OpenAI API key to the Edge Function secrets.",
+        500
+      );
     }
-
-    // Basic API key format validation
-    if (!OPENAI_API_KEY.startsWith("sk-")) {
-      console.error("Invalid OpenAI API key format");
-      return new Response(JSON.stringify({ 
-        error: "Invalid API key format",
-        details: "OpenAI API keys should start with 'sk-'" 
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    // We expect multipart/form-data with a 'file' field (audio/webm)
+
+    // 2. --- Request Validation ---
     const contentType = req.headers.get("content-type") || "";
     if (!contentType.includes("multipart/form-data")) {
-      return new Response(JSON.stringify({ 
-        error: "Invalid content type", 
-        details: "Expected multipart/form-data with a 'file' field" 
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return createErrorResponse(
+        "Invalid content type",
+        "Expected multipart/form-data with a 'file' field.",
+        400
+      );
     }
 
     const formData = await req.formData();
     const file = formData.get("file");
 
     if (!(file instanceof Blob)) {
-      return new Response(JSON.stringify({ error: "No audio file provided under 'file'" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return createErrorResponse("No audio file provided", "The 'file' field in the form data was missing or not a file.", 400);
     }
+    console.log("Received audio file for processing.");
 
-    // Step 1: Transcription with Whisper
+
+    // 3. --- Audio Transcription with Whisper ---
     const audioFile = new File([file], "audio.webm", { type: "audio/webm" });
-
     let transcription;
     try {
       transcription = await openai.audio.transcriptions.create({
         file: audioFile,
         model: "whisper-1",
-        // You can pass language hints if desired: language: "en"
       });
-    } catch (openaiError: any) {
-      console.error("OpenAI Transcription API Error:", openaiError);
-      
-      if (openaiError.status === 401) {
-        return new Response(JSON.stringify({ 
-          error: "Invalid OpenAI API key",
-          details: "The provided OpenAI API key is incorrect or expired. Please check your API key in the Edge Function secrets." 
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+    } catch (error) {
+       if (error.status === 401) {
+        return createErrorResponse("Invalid OpenAI API key", "The provided key is incorrect or expired. Please check your Edge Function secrets.", 401);
       }
-      
-      return new Response(JSON.stringify({ 
-        error: "Transcription failed",
-        details: openaiError.message || "Failed to transcribe audio" 
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return createErrorResponse("Transcription failed", error.message || "Failed to transcribe audio with OpenAI.", 500);
     }
-
+    
     const transcribedText: string = (transcription as any).text || "";
+    if (!transcribedText.trim()) {
+        return createErrorResponse("Transcription is empty", "The audio could not be transcribed or contained no speech.", 400);
+    }
     console.log("Transcribed text:", transcribedText);
 
-    // Step 2: Analysis & Structuring with Chat Completions
-    // Strict system prompt to ensure token-optimized schema and JSON-only output
-    const systemPrompt = `You are Sir Dinewell's nutrition valet. Format user-described meals into a token-optimized JSON strictly matching this schema and rules:
 
-Return ONLY valid JSON (no explanations) with this root shape:
-{
-  "items": [
+    // 4. --- Meal Analysis with GPT-4o ---
+    const systemPrompt = `You are a nutrition valet. Format user-described meals into a token-optimized JSON strictly matching this schema.
+    Return ONLY valid JSON with this root shape:
     {
-      "qty": string,        // descriptive quantity like "2 slices" or "100g"
-      "n": string,          // descriptive name of the food item
-      "cal": number,        // total calories for the item
-      "p": number,          // grams of protein
-      "c": number,          // grams of carbohydrates
-      "f": number,          // grams of fat
-      "fib": number?        // grams of fiber (optional)
-      // Micronutrients: add as top-level keys on the item, using [shorthand]_[unit]. Example: k_mg (potassium in mg), fe_mg (iron in mg).
+      "items": [
+        {
+          "qty": string, // e.g., "2 slices", "100g"
+          "n": string, // e.g., "Whole grain toast"
+          "cal": number,
+          "p": number, // protein
+          "c": number, // carbs
+          "f": number, // fat
+          "fib": number?, // fiber (optional)
+          // Micronutrients as [abbr]_[unit], e.g., k_mg for potassium.
+        }
+      ]
     }
-  ]
-}
-
-Rules:
-- Root must contain only one key: items (array).
-- Do not include meal-level totals; only per-item values.
-- Include micronutrients when you can infer them; use lowercase shorthand and unit suffix like _mg, _mcg, _iu as appropriate.
-- If information is missing, be conservative and omit fields instead of guessing wildly.
-- If nothing can be parsed, return {"items": []}.
-`;
-
-    const userPrompt = `Transcribed meal description:\n\n${transcribedText}`;
+    Rules:
+    - Root must only contain the "items" key.
+    - Only include per-item values, not totals.
+    - Be conservative with missing info; omit fields instead of guessing.
+    - If nothing is parsable, return {"items": []}.
+    `;
 
     let completion;
     try {
-      completion = await openai.chat.completions.create({
-        model: "gpt-4o",
-        // Enforce JSON output
-        response_format: { type: "json_object" } as any,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.2,
-      });
-    } catch (openaiError: any) {
-      console.error("OpenAI Chat API Error:", openaiError);
-      
-      if (openaiError.status === 401) {
-        return new Response(JSON.stringify({ 
-          error: "Invalid OpenAI API key",
-          details: "The provided OpenAI API key is incorrect or expired. Please check your API key in the Edge Function secrets." 
-        }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        completion = await openai.chat.completions.create({
+            model: "gpt-4o",
+            response_format: { type: "json_object" },
+            messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: `Transcribed meal description:\n\n${transcribedText}` },
+            ],
+            temperature: 0.1,
         });
-      }
-      
-      return new Response(JSON.stringify({ 
-        error: "Meal analysis failed",
-        details: openaiError.message || "Failed to analyze transcribed meal" 
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    } catch(error) {
+        return createErrorResponse("Meal analysis failed", error.message || "The AI model could not process the transcribed text.", 500);
     }
 
-    const raw = completion.choices?.[0]?.message?.content || "{" + '"items"' + ": []}";
+    const rawJson = completion.choices?.[0]?.message?.content || '{"items": []}';
+    console.log("Received raw JSON from AI:", rawJson);
 
-    let parsed: any;
+
+    // 5. --- Parse, Sanitize, and Return Response ---
+    let parsedJson;
     try {
-      parsed = JSON.parse(raw);
+      parsedJson = JSON.parse(rawJson);
     } catch {
-      // Fallback: return empty structure if model failed JSON
-      parsed = { items: [] };
+      // Fallback if the model returns invalid JSON
+      parsedJson = { items: [] };
     }
 
-    // Validate & clean the structure to match the exact spec
-    const result = {
-      items: Array.isArray(parsed.items)
-        ? parsed.items.map((item: any) => {
-            const cleaned: Record<string, string | number> = {};
-            // Copy known keys with correct types if possible
-            if (typeof item.qty === "string") cleaned.qty = item.qty;
-            if (typeof item.n === "string") cleaned.n = item.n;
-            if (typeof item.cal === "number") cleaned.cal = item.cal;
-            if (typeof item.p === "number") cleaned.p = item.p;
-            if (typeof item.c === "number") cleaned.c = item.c;
-            if (typeof item.f === "number") cleaned.f = item.f;
-            if (typeof item.fib === "number") cleaned.fib = item.fib;
+    const sanitizedResult = {
+      items: Array.isArray(parsedJson.items)
+        ? parsedJson.items.map((item: any) => {
+            const cleanedItem: Record<string, string | number> = {};
+            if (typeof item.qty === "string") cleanedItem.qty = item.qty;
+            if (typeof item.n === "string") cleanedItem.n = item.n;
+            if (typeof item.cal === "number") cleanedItem.cal = item.cal;
+            if (typeof item.p === "number") cleanedItem.p = item.p;
+            if (typeof item.c === "number") cleanedItem.c = item.c;
+            if (typeof item.f === "number") cleanedItem.f = item.f;
+            if (typeof item.fib === "number") cleanedItem.fib = item.fib;
 
-            // Include micronutrients following [abbr]_[unit] pattern
-            for (const [k, v] of Object.entries(item)) {
-              if (!KNOWN_KEYS.has(k) && typeof v === "number" && /^[a-z]{1,4}_(mg|mcg|iu|g|mgdL|mmolL)$/i.test(k)) {
-                cleaned[k] = v;
+            // Copy over any valid micronutrient keys
+            for (const [key, value] of Object.entries(item)) {
+              if (!KNOWN_KEYS.has(key) && typeof value === "number" && /^[a-z]{1,4}_(mg|mcg|iu|g|mgdL|mmolL)$/i.test(key)) {
+                cleanedItem[key] = value;
               }
             }
-            return cleaned;
-          })
+            return cleanedItem;
+          }).filter(item => item.n && item.qty) // Ensure basic item data is present
         : [],
     };
+    
+    console.log("Sending sanitized result to client:", sanitizedResult);
+    return new Response(JSON.stringify(sanitizedResult), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
 
-    return new Response(JSON.stringify(result), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
   } catch (error) {
-    console.error("transcribe-and-analyze error:", error);
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return new Response(JSON.stringify({ error: message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    // General catch-all for any unexpected errors during the process
+    return createErrorResponse("An unexpected error occurred", error.message, 500);
   }
 });
