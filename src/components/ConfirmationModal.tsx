@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Check, Edit3, Info } from 'lucide-react';
+import { Check, Edit3, Info, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/components/ui/use-toast';
@@ -44,6 +44,7 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], onConfirm
   const [editItems, setEditItems] = useState<TokenItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAssumptions, setShowAssumptions] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -76,6 +77,60 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], onConfirm
 
   const removeFoodItem = (index: number) => {
     setEditItems(editItems.filter((_, i) => i !== index));
+  };
+
+  const reanalyzeItems = async () => {
+    if (!editItems.length) return;
+    
+    setReanalyzing(true);
+    try {
+      // Create text description from current items
+      const textDescription = editItems.map(item => `${item.qty} ${item.n}`).join(', ');
+      
+      const { data: result, error } = await supabase.functions.invoke('analyze', {
+        body: { text: textDescription },
+      });
+
+      if (error) {
+        console.error('Analysis error:', error);
+        toast({ variant: 'destructive', title: 'Analysis Error', description: 'Failed to analyze meal. Please try again.' });
+        return;
+      }
+
+      if (result?.items && result.items.length > 0) {
+        // Update nutritional values while preserving user-edited quantities and names
+        const updatedItems = editItems.map((currentItem, index) => {
+          const aiItem = result.items[index];
+          if (aiItem) {
+            return {
+              ...currentItem,
+              // Keep user's quantity and name, update nutritional values
+              cal: aiItem.cal || currentItem.cal,
+              p: aiItem.p || currentItem.p,
+              c: aiItem.c || currentItem.c,
+              f: aiItem.f || currentItem.f,
+              fib: aiItem.fib || currentItem.fib,
+              // Update micronutrients
+              ...Object.keys(aiItem).reduce((acc, key) => {
+                if (!KNOWN_KEYS.has(key) && typeof aiItem[key] === 'number') {
+                  acc[key] = aiItem[key];
+                }
+                return acc;
+              }, {} as Record<string, number>)
+            };
+          }
+          return currentItem;
+        });
+        
+        setEditItems(updatedItems);
+        toast({ title: 'Success', description: 'Nutritional values updated based on current items.' });
+      }
+    } catch (error) {
+      console.error('Error reanalyzing items:', error);
+      toast({ variant: 'destructive', title: 'Analysis Error', description: 'Failed to analyze meal. Please try again.' });
+    } finally {
+      setReanalyzing(false);
+    }
   };
 
   const computeTotals = (list: TokenItem[]) => {
@@ -196,32 +251,74 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], onConfirm
                 <div className="grid grid-cols-4 gap-2">
                   <div>
                     <Label className="text-xs text-muted-foreground">Cal</Label>
-                    <Input type="number" inputMode="decimal" value={item.cal ?? ''} onChange={(e) => updateItem(index, 'cal', Number(e.target.value))} placeholder="160" />
+                    <Input 
+                      type="number" 
+                      inputMode="decimal" 
+                      value={item.cal ?? ''} 
+                      onChange={(e) => updateItem(index, 'cal', Number(e.target.value))} 
+                      placeholder="160" 
+                      disabled={editMode}
+                    />
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">P (g)</Label>
-                    <Input type="number" inputMode="decimal" value={item.p ?? ''} onChange={(e) => updateItem(index, 'p', Number(e.target.value))} placeholder="8" />
+                    <Input 
+                      type="number" 
+                      inputMode="decimal" 
+                      value={item.p ?? ''} 
+                      onChange={(e) => updateItem(index, 'p', Number(e.target.value))} 
+                      placeholder="8" 
+                      disabled={editMode}
+                    />
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">C (g)</Label>
-                    <Input type="number" inputMode="decimal" value={item.c ?? ''} onChange={(e) => updateItem(index, 'c', Number(e.target.value))} placeholder="30" />
+                    <Input 
+                      type="number" 
+                      inputMode="decimal" 
+                      value={item.c ?? ''} 
+                      onChange={(e) => updateItem(index, 'c', Number(e.target.value))} 
+                      placeholder="30" 
+                      disabled={editMode}
+                    />
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">F (g)</Label>
-                    <Input type="number" inputMode="decimal" value={item.f ?? ''} onChange={(e) => updateItem(index, 'f', Number(e.target.value))} placeholder="2" />
+                    <Input 
+                      type="number" 
+                      inputMode="decimal" 
+                      value={item.f ?? ''} 
+                      onChange={(e) => updateItem(index, 'f', Number(e.target.value))} 
+                      placeholder="2" 
+                      disabled={editMode}
+                    />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-4 gap-2">
                   <div>
                     <Label className="text-xs text-muted-foreground">Fib (g)</Label>
-                    <Input type="number" inputMode="decimal" value={item.fib ?? ''} onChange={(e) => updateItem(index, 'fib', Number(e.target.value))} placeholder="6" />
+                    <Input 
+                      type="number" 
+                      inputMode="decimal" 
+                      value={item.fib ?? ''} 
+                      onChange={(e) => updateItem(index, 'fib', Number(e.target.value))} 
+                      placeholder="6" 
+                      disabled={editMode}
+                    />
                   </div>
                   {/* Render micronutrients present on any item */}
                   {micronutrientKeys.map((key) => (
                     <div key={key}>
                       <Label className="text-xs text-muted-foreground">{key}</Label>
-                      <Input type="number" inputMode="decimal" value={(item[key] as number) ?? ''} onChange={(e) => updateItem(index, key, Number(e.target.value))} placeholder="0" />
+                      <Input 
+                        type="number" 
+                        inputMode="decimal" 
+                        value={(item[key] as number) ?? ''} 
+                        onChange={(e) => updateItem(index, key, Number(e.target.value))} 
+                        placeholder="0" 
+                        disabled={editMode}
+                      />
                     </div>
                   ))}
                 </div>
@@ -276,23 +373,36 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], onConfirm
           <Separator />
 
           <div className="sticky bottom-0 left-0 right-0 bg-card/95 supports-[backdrop-filter]:bg-card/80 backdrop-blur border-t border-border pt-2 pb-[env(safe-area-inset-bottom)]">
-            <div className="flex flex-col sm:flex-row gap-2">
-              <Button variant="outline" onClick={onClose} disabled={loading} className="w-full sm:flex-1">
-                Allow me to reconsider
-              </Button>
-              <Button onClick={handleConfirm} disabled={loading || editItems.some(it => !it.n?.trim())} className="w-full sm:flex-1 btn-butler">
-                {loading ? (
-                  <>
-                    <div className="animate-spin w-4 h-4 mr-2 border-2 border-primary-foreground border-t-transparent rounded-full"></div>
-                    {editMode ? "Updating..." : "Saving..."}
-                  </>
-                ) : (
-                  <>
-                    <Check className="w-4 h-4 mr-2" />
-                    {editMode ? "Update Meal" : "Confirm & Record"}
-                  </>
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button variant="outline" onClick={onClose} disabled={loading} className="w-full sm:flex-1">
+                  Allow me to reconsider
+                </Button>
+                {editMode && (
+                  <Button 
+                    variant="secondary" 
+                    onClick={reanalyzeItems} 
+                    disabled={loading || reanalyzing}
+                    className="w-full sm:flex-1 flex items-center gap-2"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${reanalyzing ? 'animate-spin' : ''}`} />
+                    {reanalyzing ? 'Reanalyzing...' : 'Update Nutrients'}
+                  </Button>
                 )}
-              </Button>
+                <Button onClick={handleConfirm} disabled={loading || editItems.some(it => !it.n?.trim())} className="w-full sm:flex-1 btn-butler">
+                  {loading ? (
+                    <>
+                      <div className="animate-spin w-4 h-4 mr-2 border-2 border-primary-foreground border-t-transparent rounded-full"></div>
+                      {editMode ? "Updating..." : "Saving..."}
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4 mr-2" />
+                      {editMode ? "Update Meal" : "Confirm & Record"}
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
