@@ -254,7 +254,7 @@ const HistoryPage = () => {
                   </h2>
                   <div className="grid grid-cols-1 gap-4">
                     {meals.map((meal) => (
-                      <MealCard key={meal.id} meal={meal} />
+                      <MealCard key={meal.id} meal={meal} onMealUpdated={() => loadMealsForDate(selectedDate)} />
                     ))}
                   </div>
                 </div>

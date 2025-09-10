@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { Check, Edit3 } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Check, Edit3, Info } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/components/ui/use-toast';
@@ -22,18 +23,27 @@ export interface TokenItem {
   [key: string]: string | number | undefined;
 }
 
+export interface AssumptionItem {
+  type: string;
+  description: string;
+}
+
 interface ConfirmationModalProps {
   isOpen: boolean;
   onClose: () => void;
   items: TokenItem[]; // Items from edge function
+  assumptions?: AssumptionItem[]; // AI assumptions
   onConfirm: (payload: { items: TokenItem[]; totals?: any }) => void;
+  editMode?: boolean; // For editing existing meals
+  mealId?: string; // For updating existing meals
 }
 
 const KNOWN_KEYS = new Set(["qty", "n", "cal", "p", "c", "f", "fib"]);
 
-const ConfirmationModal = ({ isOpen, onClose, items, onConfirm }: ConfirmationModalProps) => {
+const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], onConfirm, editMode = false, mealId }: ConfirmationModalProps) => {
   const [editItems, setEditItems] = useState<TokenItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showAssumptions, setShowAssumptions] = useState(false);
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -104,21 +114,39 @@ const ConfirmationModal = ({ isOpen, onClose, items, onConfirm }: ConfirmationMo
       const meal_name = editItems.map(i => `${i.qty} ${i.n}`.trim()).filter(Boolean).join(', ');
       const description = meal_name;
 
-      // Persist to Supabase if the meals table exists (best-effort)
-      const { error } = await supabase.from('meals').insert({
-        user_id: user.id,
-        meal_name,
-        description,
-        total_calories: totals.total_calories,
-        protein: totals.protein,
-        carbs: totals.carbs,
-        fat: totals.fat,
-        fiber: totals.fiber,
-        micronutrients: totals.micronutrients,
-      });
-      if (error) {
-        // Log but don't block user flow
-        console.warn('Insert meals error (non-fatal):', error.message);
+      // Persist to Supabase
+      if (editMode && mealId) {
+        // Update existing meal
+        const { error } = await supabase
+          .from('meals')
+          .update({
+            meal_name,
+            description,
+            total_calories: totals.total_calories,
+            protein: totals.protein,
+            carbs: totals.carbs,
+            fat: totals.fat,
+            fiber: totals.fiber,
+            micronutrients: totals.micronutrients,
+          })
+          .eq('id', mealId)
+          .eq('user_id', user.id);
+
+        if (error) throw error;
+      } else {
+        // Insert new meal
+        const { error } = await supabase.from('meals').insert({
+          user_id: user.id,
+          meal_name,
+          description,
+          total_calories: totals.total_calories,
+          protein: totals.protein,
+          carbs: totals.carbs,
+          fat: totals.fat,
+          fiber: totals.fiber,
+          micronutrients: totals.micronutrients,
+        });
+        if (error) throw error;
       }
 
       onConfirm({ items: editItems, totals });
@@ -138,9 +166,14 @@ const ConfirmationModal = ({ isOpen, onClose, items, onConfirm }: ConfirmationMo
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-sm w-[92vw] sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-butler-heading">If I May Confirm</DialogTitle>
+          <DialogTitle className="text-butler-heading">
+            {editMode ? "If I May Assist with Revisions" : "If I May Confirm"}
+          </DialogTitle>
           <DialogDescription className="text-butler-body">
-            Review your items. Adjust quantities, names, or macros before I record them.
+            {editMode 
+              ? "Modify your meal details as desired."
+              : "Review your items. Adjust quantities, names, or macros before I record them."
+            }
           </DialogDescription>
         </DialogHeader>
 
@@ -207,6 +240,39 @@ const ConfirmationModal = ({ isOpen, onClose, items, onConfirm }: ConfirmationMo
             </Button>
           </div>
 
+          {/* Assumptions Section */}
+          {assumptions.length > 0 && (
+            <>
+              <Separator />
+              <div className="flex justify-center">
+                <Popover open={showAssumptions} onOpenChange={setShowAssumptions}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="w-full max-w-xs">
+                      <Info className="w-4 h-4 mr-2" />
+                      Quantity Estimates
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80 max-h-60 overflow-y-auto">
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-medium text-butler-heading">AI Assumptions</h4>
+                      <div className="text-xs text-muted-foreground">
+                        The following estimates were made:
+                      </div>
+                      <div className="space-y-2">
+                        {assumptions.map((assumption, index) => (
+                          <div key={index} className="border-l-2 border-primary/20 pl-3 py-1">
+                            <div className="text-xs font-medium text-primary">{assumption.type}</div>
+                            <div className="text-xs text-muted-foreground">{assumption.description}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </>
+          )}
+
           <Separator />
 
           <div className="sticky bottom-0 left-0 right-0 bg-card/95 supports-[backdrop-filter]:bg-card/80 backdrop-blur border-t border-border pt-2 pb-[env(safe-area-inset-bottom)]">
@@ -218,12 +284,12 @@ const ConfirmationModal = ({ isOpen, onClose, items, onConfirm }: ConfirmationMo
                 {loading ? (
                   <>
                     <div className="animate-spin w-4 h-4 mr-2 border-2 border-primary-foreground border-t-transparent rounded-full"></div>
-                    Saving...
+                    {editMode ? "Updating..." : "Saving..."}
                   </>
                 ) : (
                   <>
                     <Check className="w-4 h-4 mr-2" />
-                    Confirm & Record
+                    {editMode ? "Update Meal" : "Confirm & Record"}
                   </>
                 )}
               </Button>

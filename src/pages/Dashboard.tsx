@@ -49,6 +49,7 @@ const Dashboard = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [analyzedItems, setAnalyzedItems] = useState<any[] | null>(null);
+  const [analyzedAssumptions, setAnalyzedAssumptions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // --- Data Fetching ---
@@ -101,8 +102,9 @@ const Dashboard = () => {
     return `Good evening, ${name}`;
   };
 
-  const handleRecordingComplete = (result: { items: any[] }) => {
+  const handleRecordingComplete = (result: { items: any[]; assumptions?: any[] }) => {
     setAnalyzedItems(result.items || []);
+    setAnalyzedAssumptions(result.assumptions || []);
     setIsRecording(false);
     setShowConfirmation(true);
   };
@@ -270,7 +272,7 @@ const Dashboard = () => {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {meals.map((meal) => (
-                <MealCard key={meal.id} meal={meal} />
+                <MealCard key={meal.id} meal={meal} onMealUpdated={loadTodayData} />
               ))}
             </div>
           </div>
@@ -288,6 +290,7 @@ const Dashboard = () => {
         isOpen={showConfirmation}
         onClose={() => setShowConfirmation(false)}
         items={analyzedItems || []}
+        assumptions={analyzedAssumptions}
         onConfirm={handleMealConfirmed}
       />
     </div>

@@ -3,7 +3,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ChevronDown, Clock, Zap } from 'lucide-react';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { ChevronDown, Clock, Zap, Trash2, Edit } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
+import ConfirmationModal from './ConfirmationModal';
 
 interface Meal {
   id: string;
@@ -20,10 +24,14 @@ interface Meal {
 
 interface MealCardProps {
   meal: Meal;
+  onMealUpdated?: () => void; // Callback to refresh parent component
 }
 
-const MealCard = ({ meal }: MealCardProps) => {
+const MealCard = ({ meal, onMealUpdated }: MealCardProps) => {
   const [showMicros, setShowMicros] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const { toast } = useToast();
 
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -61,6 +69,59 @@ const MealCard = ({ meal }: MealCardProps) => {
     return '';
   };
 
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('meals')
+        .delete()
+        .eq('id', meal.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Meal deleted",
+        description: "The entry has been removed from your records."
+      });
+
+      onMealUpdated?.();
+    } catch (error) {
+      console.error('Error deleting meal:', error);
+      toast({
+        variant: "destructive",
+        title: "Deletion failed",
+        description: "Unable to delete the meal. Please try again."
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleEdit = () => {
+    setShowEditModal(true);
+  };
+
+  const handleEditConfirm = async () => {
+    setShowEditModal(false);
+    onMealUpdated?.();
+    toast({
+      title: "Meal updated",
+      description: "Your changes have been saved successfully."
+    });
+  };
+
+  // Convert meal to TokenItem format for editing
+  const mealAsTokenItems = [{
+    qty: "1 serving", // Default quantity for editing
+    n: meal.meal_name,
+    cal: meal.total_calories,
+    p: meal.protein,
+    c: meal.carbs,
+    f: meal.fat,
+    fib: meal.fiber,
+    ...meal.micronutrients
+  }];
+
   return (
     <Card className="card-butler hover-elevate">
       <CardHeader className="pb-3">
@@ -76,10 +137,52 @@ const MealCard = ({ meal }: MealCardProps) => {
               </div>
             </CardDescription>
           </div>
-          <Badge variant="secondary" className="bg-primary/10 text-primary hover:bg-primary/20">
-            <Zap className="w-3 h-3 mr-1" />
-            {Math.round(meal.total_calories || 0)} cal
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="bg-primary/10 text-primary hover:bg-primary/20">
+              <Zap className="w-3 h-3 mr-1" />
+              {Math.round(meal.total_calories || 0)} cal
+            </Badge>
+            <div className="flex gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleEdit}
+                className="h-8 w-8 p-0 hover:bg-muted"
+              >
+                <Edit className="w-3 h-3" />
+              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0 hover:bg-destructive/10 hover:text-destructive"
+                    disabled={deleting}
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete Meal Entry</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Are you certain you wish to remove "{meal.meal_name}" from your records? 
+                      This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDelete}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      Delete Entry
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          </div>
         </div>
       </CardHeader>
       
@@ -138,6 +241,16 @@ const MealCard = ({ meal }: MealCardProps) => {
           </div>
         )}
       </CardContent>
+
+      {/* Edit Modal */}
+      <ConfirmationModal
+        isOpen={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        items={mealAsTokenItems}
+        onConfirm={handleEditConfirm}
+        editMode={true}
+        mealId={meal.id}
+      />
     </Card>
   );
 };

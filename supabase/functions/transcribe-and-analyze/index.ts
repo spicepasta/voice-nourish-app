@@ -101,13 +101,20 @@ serve(async (req) => {
           "fib": number?, // fiber (optional)
           // Micronutrients as [abbr]_[unit], e.g., k_mg for potassium.
         }
+      ],
+      "assumptions": [
+        {
+          "type": string, // e.g., "Volume Conversion", "Portion Size"
+          "description": string // e.g., "Small glass ≈ 200 mL"
+        }
       ]
     }
     Rules:
-    - Root must only contain the "items" key.
+    - Make educated guesses for nutritional values when not explicitly provided
+    - Document all assumptions in the assumptions array
+    - Include assumptions for volume conversions, portion sizes, cooking methods, etc.
     - Only include per-item values, not totals.
-    - Be conservative with missing info; omit fields instead of guessing.
-    - If nothing is parsable, return {"items": []}.
+    - If nothing is parsable, return {"items": [], "assumptions": []}.
     `;
 
     let completion;
@@ -159,6 +166,12 @@ serve(async (req) => {
             return cleanedItem;
           }).filter(item => item.n && item.qty) // Ensure basic item data is present
         : [],
+      assumptions: Array.isArray(parsedJson.assumptions)
+        ? parsedJson.assumptions.map((assumption: any) => ({
+            type: typeof assumption.type === "string" ? assumption.type : "",
+            description: typeof assumption.description === "string" ? assumption.description : ""
+          })).filter((assumption: any) => assumption.type && assumption.description)
+        : []
     };
     
     console.log("Sending sanitized result to client:", sanitizedResult);
