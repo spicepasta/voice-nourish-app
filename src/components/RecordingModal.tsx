@@ -34,6 +34,7 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
 
       mediaRecorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setIsProcessing(true);
         processAudio(audioBlob);
         stream.getTracks().forEach(track => track.stop());
       };
@@ -54,19 +55,15 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      setIsProcessing(true);
     }
   };
 
   const processAudio = async (audioBlob: Blob) => {
     try {
-      const formData = new FormData();
-      formData.append('file', audioBlob, 'audio.webm');
-
       // Use the official Supabase client to invoke the edge function
       // This handles authentication and content-type headers correctly.
       const { data: result, error } = await supabase.functions.invoke('transcribe-and-analyze', {
-        body: formData,
+        body: audioBlob,
       });
 
       if (error) {
