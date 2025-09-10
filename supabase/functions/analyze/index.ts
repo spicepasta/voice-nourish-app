@@ -1,23 +1,17 @@
-import "https://deno.land/x/xhr@0.1.0/mod.ts";
+// This is a new Edge Function to analyze text-based meal entries.
+// Make sure to deploy this function using the Supabase CLI:
+// supabase functions deploy analyze-text --no-verify-jwt
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import OpenAI from "https://deno.land/x/openai/mod.ts";
 
-// Define CORS headers for handling cross-origin requests
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// A set of known, expected keys in the final JSON output for validation.
 const KNOWN_KEYS = new Set(["qty", "n", "cal", "p", "c", "f", "fib"]);
 
-/**
- * A helper function to create a standardized JSON error response.
- * @param {string} error - The primary error message.
- * @param {string} details - More specific details about the error.
- * @param {number} status - The HTTP status code.
- * @returns {Response} A Deno Response object.
- */
 function createErrorResponse(error: string, details: string, status: number): Response {
   console.error(`Error ${status}: ${error} - ${details}`);
   return new Response(JSON.stringify({ error, details }), {
@@ -26,15 +20,12 @@ function createErrorResponse(error: string, details: string, status: number): Re
   });
 }
 
-// --- Main Server Function ---
 serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // 1. --- API Key and Client Initialization ---
     const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
     if (!OPENAI_API_KEY) {
       return createErrorResponse(
@@ -45,7 +36,7 @@ serve(async (req) => {
     }
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    // 2. --- Request Validation ---
+    // Expect a JSON body with a 'text' property
     const { text } = await req.json();
 
     if (!text || typeof text !== "string" || !text.trim()) {
@@ -53,7 +44,7 @@ serve(async (req) => {
     }
     console.log("Received text for analysis:", text);
 
-    // 3. --- Meal Analysis with GPT-4o ---
+    // Meal Analysis with GPT-4o
     const systemPrompt = `You are a nutrition valet. Format user-described meals into a token-optimized JSON strictly matching this schema.
     Return ONLY valid JSON with this root shape:
     {
@@ -61,26 +52,17 @@ serve(async (req) => {
         {
           "qty": string, // e.g., "2 slices", "100g"
           "n": string, // e.g., "Whole grain toast"
-          "cal": number,
-          "p": number, // protein
-          "c": number, // carbs
-          "f": number, // fat
-          "fib": number?, // fiber (optional)
+          "cal": number, "p": number, "c": number, "f": number, "fib": number?,
           // Micronutrients as [abbr]_[unit], e.g., k_mg for potassium.
         }
       ],
       "assumptions": [
-        {
-          "type": string, // e.g., "Volume Conversion", "Portion Size"
-          "description": string // e.g., "Small glass ≈ 200 mL"
-        }
+        { "type": string, "description": string }
       ]
     }
     Rules:
-    - Make educated guesses for nutritional values when not explicitly provided
-    - Document all assumptions in the assumptions array
-    - Include assumptions for volume conversions, portion sizes, cooking methods, etc.
-    - Only include per-item values, not totals.
+    - Make educated guesses for nutritional values when not explicitly provided.
+    - Document all assumptions (volume, portions, etc.) in the assumptions array.
     - If nothing is parsable, return {"items": [], "assumptions": []}.
     `;
 
@@ -99,16 +81,15 @@ serve(async (req) => {
         return createErrorResponse("Meal analysis failed", error.message || "The AI model could not process the text.", 500);
     }
 
-    const rawJson = completion.choices?.[0]?.message?.content || '{"items": []}';
+    const rawJson = completion.choices?.[0]?.message?.content || '{"items": [], "assumptions": []}';
     console.log("Received raw JSON from AI:", rawJson);
 
-    // 4. --- Parse, Sanitize, and Return Response ---
+    // Parse, Sanitize, and Return Response
     let parsedJson;
     try {
       parsedJson = JSON.parse(rawJson);
     } catch {
-      // Fallback if the model returns invalid JSON
-      parsedJson = { items: [] };
+      parsedJson = { items: [], assumptions: [] };
     }
 
     const sanitizedResult = {
@@ -123,20 +104,16 @@ serve(async (req) => {
             if (typeof item.f === "number") cleanedItem.f = item.f;
             if (typeof item.fib === "number") cleanedItem.fib = item.fib;
 
-            // Copy over any valid micronutrient keys
             for (const [key, value] of Object.entries(item)) {
               if (!KNOWN_KEYS.has(key) && typeof value === "number" && /^[a-z]{1,4}_(mg|mcg|iu|g|mgdL|mmolL)$/i.test(key)) {
                 cleanedItem[key] = value;
               }
             }
             return cleanedItem;
-          }).filter(item => item.n && item.qty) // Ensure basic item data is present
+          }).filter((item: any) => item.n && item.qty)
         : [],
       assumptions: Array.isArray(parsedJson.assumptions)
-        ? parsedJson.assumptions.map((assumption: any) => ({
-            type: typeof assumption.type === "string" ? assumption.type : "",
-            description: typeof assumption.description === "string" ? assumption.description : ""
-          })).filter((assumption: any) => assumption.type && assumption.description)
+        ? parsedJson.assumptions.filter((asm: any) => asm.type && asm.description)
         : []
     };
     
@@ -146,7 +123,6 @@ serve(async (req) => {
     });
 
   } catch (error) {
-    // General catch-all for any unexpected errors during the process
     return createErrorResponse("An unexpected error occurred", error.message, 500);
   }
 });
