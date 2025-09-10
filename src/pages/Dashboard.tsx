@@ -4,15 +4,24 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import * as Recharts from 'recharts';
-import { Mic, Plus, History, User } from 'lucide-react';
+import { Mic, Plus, History, User, Bot, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/components/ui/use-toast';
+import { useToast } from '@/hooks/use-toast';
 import RecordingModal from '@/components/RecordingModal';
 import ConfirmationModal from '@/components/ConfirmationModal';
 import MealCard from '@/components/MealCard';
 
 // --- Type Definitions ---
+interface Assumption {
+  type: string;
+  description: string;
+}
+
+interface AnalyzedResult {
+  items: any[];
+  assumptions?: Assumption[];
+}
 
 interface DayData {
   calories: number;
@@ -36,7 +45,6 @@ interface Meal {
 }
 
 // --- Dashboard Component ---
-
 const Dashboard = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
@@ -46,11 +54,11 @@ const Dashboard = () => {
   const [dayData, setDayData] = useState<DayData>({ calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 });
   const [meals, setMeals] = useState<Meal[]>([]);
   const [manualEntry, setManualEntry] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
-  const [showConfirmation, setShowConfirmation] = useState(false);
-  const [analyzedItems, setAnalyzedItems] = useState<any[] | null>(null);
-  const [analyzedAssumptions, setAnalyzedAssumptions] = useState<any[]>([]);
+  const [isRecordingModalOpen, setIsRecordingModalOpen] = useState(false);
+  const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
+  const [analyzedData, setAnalyzedData] = useState<AnalyzedResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAnalyzingText, setIsAnalyzingText] = useState(false);
 
   // --- Data Fetching ---
   const loadTodayData = async () => {
@@ -102,16 +110,15 @@ const Dashboard = () => {
     return `Good evening, ${name}`;
   };
 
-  const handleRecordingComplete = (result: { items: any[]; assumptions?: any[] }) => {
-    setAnalyzedItems(result.items || []);
-    setAnalyzedAssumptions(result.assumptions || []);
-    setIsRecording(false);
-    setShowConfirmation(true);
+  const handleAnalysisComplete = (result: AnalyzedResult) => {
+    setAnalyzedData(result);
+    setIsRecordingModalOpen(false);
+    setIsConfirmationModalOpen(true);
   };
 
   const handleMealConfirmed = async () => {
-    setShowConfirmation(false);
-    setAnalyzedItems(null);
+    setIsConfirmationModalOpen(false);
+    setAnalyzedData(null);
     await loadTodayData(); // Refresh data
     toast({
       title: "Meal recorded with distinction",
@@ -119,13 +126,34 @@ const Dashboard = () => {
     });
   };
 
-  const handleManualEntry = () => {
-    if (manualEntry.trim()) {
-      setAnalyzedItems([{ qty: '1 serving', n: manualEntry.trim() }]);
-      setShowConfirmation(true);
-      setManualEntry('');
+  const handleManualEntry = async () => {
+    if (!manualEntry.trim()) return;
+
+    setIsAnalyzingText(true);
+    try {
+        const { data: result, error } = await supabase.functions.invoke('analyze-text', {
+            body: { text: manualEntry },
+        });
+
+        if (error) {
+            throw error;
+        }
+
+        handleAnalysisComplete(result);
+        setManualEntry('');
+
+    } catch (error: any) {
+        console.error('Error analyzing text entry:', error);
+        toast({
+            variant: 'destructive',
+            title: 'Analysis Failed',
+            description: error.message || 'Could not analyze your meal description.'
+        });
+    } finally {
+        setIsAnalyzingText(false);
     }
   };
+
 
   // --- Chart Data ---
   const pieData = [
@@ -232,7 +260,7 @@ const Dashboard = () => {
             </CardHeader>
             <CardContent className="space-y-4 flex flex-col justify-center h-full pb-6">
               <Button 
-                onClick={() => setIsRecording(true)}
+                onClick={() => setIsRecordingModalOpen(true)}
                 className="w-full h-20 text-lg btn-butler hover-elevate"
               >
                 <Mic className="w-6 h-6 mr-3" />
@@ -250,14 +278,19 @@ const Dashboard = () => {
               
               <div className="flex flex-col sm:flex-row gap-2">
                 <Input
-                  placeholder="A written note, if you prefer..."
+                  placeholder="A written note, e.g., '150g chicken breast with a cup of rice'"
                   value={manualEntry}
                   onChange={(e) => setManualEntry(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleManualEntry()}
                   className="flex-1"
+                  disabled={isAnalyzingText}
                 />
-                <Button onClick={handleManualEntry} disabled={!manualEntry.trim()} className="w-full sm:w-auto">
-                  <Plus className="w-4 h-4" />
+                <Button onClick={handleManualEntry} disabled={!manualEntry.trim() || isAnalyzingText} className="w-full sm:w-auto">
+                  {isAnalyzingText ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Bot className="w-4 h-4" />
+                  )}
                 </Button>
               </div>
             </CardContent>
@@ -272,7 +305,7 @@ const Dashboard = () => {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {meals.map((meal) => (
-                <MealCard key={meal.id} meal={meal} onMealUpdated={loadTodayData} />
+                <MealCard key={meal.id} meal={meal} />
               ))}
             </div>
           </div>
@@ -281,16 +314,15 @@ const Dashboard = () => {
 
       {/* --- Modals --- */}
       <RecordingModal
-        isOpen={isRecording}
-        onClose={() => setIsRecording(false)}
-        onRecordingComplete={handleRecordingComplete}
+        isOpen={isRecordingModalOpen}
+        onClose={() => setIsRecordingModalOpen(false)}
+        onRecordingComplete={handleAnalysisComplete}
       />
 
       <ConfirmationModal
-        isOpen={showConfirmation}
-        onClose={() => setShowConfirmation(false)}
-        items={analyzedItems || []}
-        assumptions={analyzedAssumptions}
+        isOpen={isConfirmationModalOpen}
+        onClose={() => setIsConfirmationModalOpen(false)}
+        data={analyzedData}
         onConfirm={handleMealConfirmed}
       />
     </div>
