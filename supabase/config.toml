@@ -2,6 +2,8 @@ project_id = "flrnybizzmjhsdmyyiez"
 
 [functions.transcribe-and-analyze]
 verify_jwt = false
+timeout = 60
 
 [functions.analyze]
 verify_jwt = false
+timeout = 60
