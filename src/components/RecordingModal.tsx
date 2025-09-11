@@ -8,7 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 interface RecordingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onRecordingComplete: (result: { items: any[] }) => void;
+  onRecordingComplete: (result: { items: any[], assumptions?: any[] }) => void;
 }
 
 const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModalProps) => {
@@ -60,14 +60,16 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
 
   const processAudio = async (audioBlob: Blob) => {
     try {
-      // Use the official Supabase client to invoke the edge function
-      // This handles authentication and content-type headers correctly.
+      // This is the corrected step: Create the FormData object and append the audio file.
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'audio.webm');
+
+      // Use the official Supabase client to invoke the edge function.
       const { data: result, error } = await supabase.functions.invoke('transcribe-and-analyze', {
         body: formData,
       });
 
       if (error) {
-        // The invoke method returns an error object. We throw it to be caught below.
         console.error("Supabase function invocation error:", error);
         throw error;
       }
@@ -165,4 +167,3 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
 };
 
 export default RecordingModal;
-
