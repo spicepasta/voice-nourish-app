@@ -46,10 +46,18 @@ serve(async (req) => {
 
 
     // 2. --- Request Validation ---
-    const file = await req.blob();
+    // Check for multipart/form-data content type
+    const contentType = req.headers.get('content-type');
+    if (!contentType?.includes('multipart/form-data')) {
+      return createErrorResponse('Invalid content type', 'Expected multipart/form-data', 400);
+    }
 
-    if (!(file instanceof Blob) || file.size === 0) {
-      return createErrorResponse("No audio file provided", "The request body was missing or contained no audio data.", 400);
+    // Parse the form data
+    const formData = await req.formData();
+    const file = formData.get('file') as File;
+    
+    if (!file || file.size === 0) {
+      return createErrorResponse('No audio file provided', 'No file found in form data', 400);
     }
     console.log("Received audio file for processing.");
 

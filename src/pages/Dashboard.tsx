@@ -322,7 +322,8 @@ const Dashboard = () => {
       <ConfirmationModal
         isOpen={isConfirmationModalOpen}
         onClose={() => setIsConfirmationModalOpen(false)}
-        data={analyzedData}
+        items={analyzedData?.items || []}
+        assumptions={analyzedData?.assumptions || []}
         onConfirm={handleMealConfirmed}
       />
     </div>

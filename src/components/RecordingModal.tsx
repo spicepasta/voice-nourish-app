@@ -55,24 +55,39 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      setIsProcessing(true);
     }
   };
 
   const processAudio = async (audioBlob: Blob) => {
     try {
-      // This is the corrected step: Create the FormData object and append the audio file.
+      // Create FormData and append the audio file
       const formData = new FormData();
       formData.append('file', audioBlob, 'audio.webm');
 
-      // Use the official Supabase client to invoke the edge function.
-      const { data: result, error } = await supabase.functions.invoke('transcribe-and-analyze', {
+      // Get the user's session for authorization
+      const { data: session } = await supabase.auth.getSession();
+      
+      if (!session?.session?.access_token) {
+        throw new Error('No valid session found. Please log in again.');
+      }
+
+      // Use native fetch with proper headers
+      const response = await fetch('https://flrnybizzmjhsdmyyiez.supabase.co/functions/v1/transcribe-and-analyze', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.session.access_token}`,
+          'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZscm55Yml6em1qaHNkbXl5aWV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM3MzU3NjIsImV4cCI6MjA2OTMxMTc2Mn0.aVaSG1X2N33iWQbUM6ZbXtgzn38A01xDFYFfbRpIqsI',
+        },
         body: formData,
       });
 
-      if (error) {
-        console.error("Supabase function invocation error:", error);
-        throw error;
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Server error: ${response.status} - ${errorText}`);
       }
+
+      const result = await response.json();
 
       if (!result || !Array.isArray(result.items)) {
         throw new Error('Invalid response structure from the transcription service.');
