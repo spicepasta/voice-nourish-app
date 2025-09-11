@@ -132,7 +132,7 @@ const Dashboard = () => {
 
     setIsAnalyzingText(true);
     try {
-        const { data: result, error } = await supabase.functions.invoke('analyze-text', {
+        const { data: result, error } = await supabase.functions.invoke('analyze', {
             body: { text: manualEntry },
         });
 
