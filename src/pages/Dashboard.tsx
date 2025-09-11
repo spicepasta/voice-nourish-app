@@ -21,6 +21,7 @@ interface Assumption {
 interface AnalyzedResult {
   items: any[];
   assumptions?: Assumption[];
+  detected_time?: string | null;
 }
 
 interface DayData {
@@ -324,6 +325,7 @@ const Dashboard = () => {
         onClose={() => setIsConfirmationModalOpen(false)}
         items={analyzedData?.items || []}
         assumptions={analyzedData?.assumptions || []}
+        detectedTime={analyzedData?.detected_time}
         onConfirm={handleMealConfirmed}
       />
     </div>

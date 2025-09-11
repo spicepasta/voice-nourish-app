@@ -105,14 +105,18 @@ serve(async (req) => {
           "type": string, // e.g., "Volume Conversion", "Portion Size"
           "description": string // e.g., "Small glass ≈ 200 mL"
         }
-      ]
+      ],
+      "detected_time": string? // ISO 8601 timestamp if a specific time is mentioned (e.g., "dinner last night", "breakfast this morning"), null if current time should be used
     }
     Rules:
     - Make educated guesses for nutritional values when not explicitly provided
     - Document all assumptions in the assumptions array
     - Include assumptions for volume conversions, portion sizes, cooking methods, etc.
+    - If user mentions a specific time like "last night", "this morning", "yesterday", "dinner last night", etc., parse it and return detected_time as ISO timestamp
+    - If no specific time mentioned, leave detected_time as null (current time will be used)
+    - For relative times like "last night dinner", assume reasonable meal times (breakfast: 8am, lunch: 12pm, dinner: 7pm)
     - Only include per-item values, not totals.
-    - If nothing is parsable, return {"items": [], "assumptions": []}.
+    - If nothing is parsable, return {"items": [], "assumptions": [], "detected_time": null}.
     `;
 
     let completion;
@@ -169,7 +173,8 @@ serve(async (req) => {
             type: typeof assumption.type === "string" ? assumption.type : "",
             description: typeof assumption.description === "string" ? assumption.description : ""
           })).filter((assumption: any) => assumption.type && assumption.description)
-        : []
+        : [],
+      detected_time: typeof parsedJson.detected_time === "string" ? parsedJson.detected_time : null
     };
     
     console.log("Sending sanitized result to client:", sanitizedResult);

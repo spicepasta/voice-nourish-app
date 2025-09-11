@@ -33,18 +33,20 @@ interface ConfirmationModalProps {
   onClose: () => void;
   items: TokenItem[]; // Items from edge function
   assumptions?: AssumptionItem[]; // AI assumptions
-  onConfirm: (payload: { items: TokenItem[]; totals?: any }) => void;
+  detectedTime?: string | null; // AI-detected time from the meal description
+  onConfirm: (payload: { items: TokenItem[]; totals?: any; loggedAt?: string }) => void;
   editMode?: boolean; // For editing existing meals
   mealId?: string; // For updating existing meals
 }
 
 const KNOWN_KEYS = new Set(["qty", "n", "cal", "p", "c", "f", "fib"]);
 
-const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], onConfirm, editMode = false, mealId }: ConfirmationModalProps) => {
+const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedTime, onConfirm, editMode = false, mealId }: ConfirmationModalProps) => {
   const [editItems, setEditItems] = useState<TokenItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAssumptions, setShowAssumptions] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
+  const [loggedAt, setLoggedAt] = useState<string>('');
   const { user } = useAuth();
   const { toast } = useToast();
 
