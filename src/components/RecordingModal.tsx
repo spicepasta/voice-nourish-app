@@ -63,7 +63,7 @@ const RecordingModal = ({ isOpen, onClose, onRecordingComplete }: RecordingModal
       // Use the official Supabase client to invoke the edge function
       // This handles authentication and content-type headers correctly.
       const { data: result, error } = await supabase.functions.invoke('transcribe-and-analyze', {
-        body: audioBlob,
+        body: formData,
       });
 
       if (error) {
