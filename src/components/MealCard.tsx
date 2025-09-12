@@ -45,28 +45,25 @@ const MealCard = ({ meal, onMealUpdated }: MealCardProps) => {
 
     return (
       <div className="grid grid-cols-2 gap-2 text-sm">
-        {Object.entries(meal.micronutrients).map(([key, value]) => (
-          <div key={key} className="flex justify-between">
-            <span className="capitalize text-muted-foreground">
-              {key.replace(/_/g, ' ')}:
-            </span>
-            <span className="font-medium">
-              {typeof value === 'number' ? `${value}${getUnit(key)}` : String(value)}
-            </span>
-          </div>
-        ))}
+        {Object.entries(meal.micronutrients).map(([key, value]) => {
+          const parts = key.split('_');
+          const nutrientName = parts[0];
+          const unit = parts[1];
+          const formattedLabel = unit ? `${nutrientName} (${unit})` : nutrientName;
+
+          return (
+            <div key={key} className="flex justify-between">
+              <span className="capitalize text-muted-foreground">
+                {formattedLabel}:
+              </span>
+              <span className="font-medium">
+                {String(value)}
+              </span>
+            </div>
+          );
+        })}
       </div>
     );
-  };
-
-  const getUnit = (nutrient: string) => {
-    const mgNutrients = ['vitamin_c', 'vitamin_e', 'calcium', 'iron', 'magnesium'];
-    const mcgNutrients = ['folate', 'vitamin_b12', 'vitamin_d'];
-    
-    if (mgNutrients.includes(nutrient)) return 'mg';
-    if (mcgNutrients.includes(nutrient)) return 'µg';
-    if (nutrient === 'potassium') return 'mg';
-    return '';
   };
 
   const handleDelete = async () => {
