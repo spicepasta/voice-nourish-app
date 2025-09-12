@@ -43,6 +43,7 @@ const KNOWN_KEYS = new Set(["qty", "n", "cal", "p", "c", "f", "fib"]);
 
 const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedTime, onConfirm, editMode = false, mealId }: ConfirmationModalProps) => {
   const [editItems, setEditItems] = useState<TokenItem[]>([]);
+  const [baseValues, setBaseValues] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const [showAssumptions, setShowAssumptions] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
@@ -50,12 +51,78 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
   const { user } = useAuth();
   const { toast } = useToast();
 
-  // Initialize local editable items whenever modal opens
+  // Helper function to parse quantity number from string like "2 slices" -> 2
+  const parseQuantityNumber = (qtyString: string): number => {
+    const match = qtyString.match(/^(\d*\.?\d+)/);
+    return match ? parseFloat(match[1]) : 1;
+  };
+
+  // Helper function to get quantity unit from string like "2 slices" -> "slices"
+  const getQuantityUnit = (qtyString: string): string => {
+    return qtyString.replace(/^(\d*\.?\d+)\s*/, '').trim() || 'serving';
+  };
+
+  // Initialize local editable items and calculate base values whenever modal opens
   useEffect(() => {
     if (isOpen) {
-      setEditItems(Array.isArray(items) && items.length ? items.map(i => ({ ...i })) : [{ qty: '1 serving', n: '' }]);
+      const initialItems = Array.isArray(items) && items.length ? items.map(i => ({ ...i })) : [{ qty: '1 serving', n: '' }];
+      setEditItems(initialItems);
+      
+      // Calculate base per-unit values
+      const bases: Record<string, any> = {};
+      initialItems.forEach((item, index) => {
+        const qtyNumber = parseQuantityNumber(item.qty || '1');
+        const qtyUnit = getQuantityUnit(item.qty || '1 serving');
+        
+        bases[index] = {
+          qtyNumber,
+          qtyUnit,
+          cal: (item.cal || 0) / qtyNumber,
+          p: (item.p || 0) / qtyNumber,
+          c: (item.c || 0) / qtyNumber,
+          f: (item.f || 0) / qtyNumber,
+          fib: (item.fib || 0) / qtyNumber,
+        };
+        
+        // Handle micronutrients
+        Object.keys(item).forEach(key => {
+          if (!KNOWN_KEYS.has(key) && typeof item[key] === 'number') {
+            bases[index][key] = (item[key] as number) / qtyNumber;
+          }
+        });
+      });
+      
+      setBaseValues(bases);
     }
   }, [isOpen, items]);
+
+  // Function to update quantity and recalculate nutrients
+  const updateQuantity = (index: number, newQtyNumber: number) => {
+    const base = baseValues[index];
+    if (!base) return;
+    
+    const updated = [...editItems];
+    const newQty = `${newQtyNumber} ${base.qtyUnit}`;
+    
+    updated[index] = {
+      ...updated[index],
+      qty: newQty,
+      cal: Math.round((base.cal * newQtyNumber) * 100) / 100,
+      p: Math.round((base.p * newQtyNumber) * 100) / 100,
+      c: Math.round((base.c * newQtyNumber) * 100) / 100,
+      f: Math.round((base.f * newQtyNumber) * 100) / 100,
+      fib: Math.round((base.fib * newQtyNumber) * 100) / 100,
+    };
+    
+    // Update micronutrients
+    Object.keys(base).forEach(key => {
+      if (!KNOWN_KEYS.has(key) && key !== 'qtyNumber' && key !== 'qtyUnit' && typeof base[key] === 'number') {
+        updated[index][key] = Math.round((base[key] * newQtyNumber) * 100) / 100;
+      }
+    });
+    
+    setEditItems(updated);
+  };
 
   const micronutrientKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -74,11 +141,40 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
   };
 
   const addFoodItem = () => {
-    setEditItems([...editItems, { qty: '1 serving', n: '' }]);
+    const newIndex = editItems.length;
+    const newItem = { qty: '1 serving', n: '' };
+    setEditItems([...editItems, newItem]);
+    
+    // Add base values for the new item
+    setBaseValues(prev => ({
+      ...prev,
+      [newIndex]: {
+        qtyNumber: 1,
+        qtyUnit: 'serving',
+        cal: 0,
+        p: 0,
+        c: 0,
+        f: 0,
+        fib: 0,
+      }
+    }));
   };
 
   const removeFoodItem = (index: number) => {
-    setEditItems(editItems.filter((_, i) => i !== index));
+    const newItems = editItems.filter((_, i) => i !== index);
+    setEditItems(newItems);
+    
+    // Clean up base values and reindex them
+    const newBaseValues: Record<string, any> = {};
+    Object.keys(baseValues).forEach((key, i) => {
+      const keyIndex = parseInt(key);
+      if (keyIndex < index) {
+        newBaseValues[keyIndex] = baseValues[key];
+      } else if (keyIndex > index) {
+        newBaseValues[keyIndex - 1] = baseValues[key];
+      }
+    });
+    setBaseValues(newBaseValues);
   };
 
   const reanalyzeItems = async () => {
@@ -242,7 +338,21 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <Label htmlFor={`qty-${index}`} className="text-xs text-muted-foreground">Quantity</Label>
-                    <Input id={`qty-${index}`} value={item.qty || ''} onChange={(e) => updateItem(index, 'qty', e.target.value)} placeholder="e.g., 2 slices, 150g" />
+                    <div className="flex items-center gap-1">
+                      <Input 
+                        id={`qty-${index}`} 
+                        type="number" 
+                        step="0.1"
+                        min="0.1"
+                        value={baseValues[index]?.qtyNumber || parseQuantityNumber(item.qty || '1')} 
+                        onChange={(e) => updateQuantity(index, parseFloat(e.target.value) || 0.1)} 
+                        placeholder="1" 
+                        className="flex-1"
+                      />
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        {baseValues[index]?.qtyUnit || getQuantityUnit(item.qty || '1 serving')}
+                      </span>
+                    </div>
                   </div>
                   <div>
                     <Label htmlFor={`name-${index}`} className="text-xs text-muted-foreground">Food Item</Label>
@@ -257,9 +367,9 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                       type="number" 
                       inputMode="decimal" 
                       value={item.cal ?? ''} 
-                      onChange={(e) => updateItem(index, 'cal', Number(e.target.value))} 
                       placeholder="160" 
-                      disabled={editMode}
+                      disabled
+                      className="bg-muted"
                     />
                   </div>
                   <div>
@@ -268,9 +378,9 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                       type="number" 
                       inputMode="decimal" 
                       value={item.p ?? ''} 
-                      onChange={(e) => updateItem(index, 'p', Number(e.target.value))} 
                       placeholder="8" 
-                      disabled={editMode}
+                      disabled
+                      className="bg-muted"
                     />
                   </div>
                   <div>
@@ -279,9 +389,9 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                       type="number" 
                       inputMode="decimal" 
                       value={item.c ?? ''} 
-                      onChange={(e) => updateItem(index, 'c', Number(e.target.value))} 
                       placeholder="30" 
-                      disabled={editMode}
+                      disabled
+                      className="bg-muted"
                     />
                   </div>
                   <div>
@@ -290,9 +400,9 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                       type="number" 
                       inputMode="decimal" 
                       value={item.f ?? ''} 
-                      onChange={(e) => updateItem(index, 'f', Number(e.target.value))} 
                       placeholder="2" 
-                      disabled={editMode}
+                      disabled
+                      className="bg-muted"
                     />
                   </div>
                 </div>
@@ -304,9 +414,9 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                       type="number" 
                       inputMode="decimal" 
                       value={item.fib ?? ''} 
-                      onChange={(e) => updateItem(index, 'fib', Number(e.target.value))} 
                       placeholder="6" 
-                      disabled={editMode}
+                      disabled
+                      className="bg-muted"
                     />
                   </div>
                   {/* Render micronutrients present on any item */}
@@ -317,9 +427,9 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                         type="number" 
                         inputMode="decimal" 
                         value={(item[key] as number) ?? ''} 
-                        onChange={(e) => updateItem(index, key, Number(e.target.value))} 
                         placeholder="0" 
-                        disabled={editMode}
+                        disabled
+                        className="bg-muted"
                       />
                     </div>
                   ))}
@@ -351,13 +461,13 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                       Quantity Estimates
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-80 max-h-60 overflow-y-auto">
+                  <PopoverContent className="w-80 max-h-[50vh] sm:max-h-60 overflow-y-auto z-50 bg-popover">
                     <div className="space-y-2">
                       <h4 className="text-sm font-medium text-butler-heading">AI Assumptions</h4>
                       <div className="text-xs text-muted-foreground">
                         The following estimates were made:
                       </div>
-                      <div className="space-y-2">
+                      <div className="space-y-2 max-h-[40vh] sm:max-h-48 overflow-y-auto">
                         {assumptions.map((assumption, index) => (
                           <div key={index} className="border-l-2 border-primary/20 pl-3 py-1">
                             <div className="text-xs font-medium text-primary">{assumption.type}</div>
