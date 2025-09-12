@@ -31,6 +31,16 @@ const MealCard = ({ meal, onMealUpdated }: MealCardProps) => {
   const [showMicros, setShowMicros] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [mealAsTokenItems, setMealAsTokenItems] = useState([{
+    qty: "1 serving",
+    n: meal.meal_name,
+    cal: meal.total_calories,
+    p: meal.protein,
+    c: meal.carbs,
+    f: meal.fat,
+    fib: meal.fiber,
+    ...meal.micronutrients
+  }]);
   const { toast } = useToast();
 
   const formatTime = (timestamp: string) => {
@@ -94,8 +104,28 @@ const MealCard = ({ meal, onMealUpdated }: MealCardProps) => {
     }
   };
 
-  const handleEdit = () => {
-    setShowEditModal(true);
+  const handleEdit = async () => {
+    try {
+      // Re-analyze the meal description to get individual items
+      const response = await supabase.functions.invoke('analyze', {
+        body: { input: meal.description || meal.meal_name }
+      });
+
+      if (response.error) throw response.error;
+
+      const analysisResult = response.data;
+      if (analysisResult?.items) {
+        setMealAsTokenItems(analysisResult.items);
+        setShowEditModal(true);
+      } else {
+        // Fallback to current format if analysis fails
+        setShowEditModal(true);
+      }
+    } catch (error) {
+      console.error('Error re-analyzing meal:', error);
+      // Fallback to current format if analysis fails
+      setShowEditModal(true);
+    }
   };
 
   const handleEditConfirm = async () => {
@@ -107,17 +137,6 @@ const MealCard = ({ meal, onMealUpdated }: MealCardProps) => {
     });
   };
 
-  // Convert meal to TokenItem format for editing
-  const mealAsTokenItems = [{
-    qty: "1 serving", // Default quantity for editing
-    n: meal.meal_name,
-    cal: meal.total_calories,
-    p: meal.protein,
-    c: meal.carbs,
-    f: meal.fat,
-    fib: meal.fiber,
-    ...meal.micronutrients
-  }];
 
   return (
     <Card className="card-butler hover-elevate">

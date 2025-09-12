@@ -7,7 +7,7 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instanciate createClient with right options
+  // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
     PostgrestVersion: "12.2.12 (cd3cf9e)"
@@ -65,27 +65,69 @@ export type Database = {
         }
         Relationships: []
       }
-      profiles: {
+      notifications: {
         Row: {
           created_at: string
-          display_name: string | null
           id: string
+          is_read: boolean
+          link: string | null
+          message: string
           updated_at: string
           user_id: string
         }
         Insert: {
           created_at?: string
-          display_name?: string | null
           id?: string
+          is_read?: boolean
+          link?: string | null
+          message: string
           updated_at?: string
           user_id: string
         }
         Update: {
           created_at?: string
+          id?: string
+          is_read?: boolean
+          link?: string | null
+          message?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          dietary_preferences: Json | null
+          display_name: string | null
+          gender: string | null
+          height_cm: number | null
+          id: string
+          updated_at: string
+          user_id: string
+          weight_kg: number | null
+        }
+        Insert: {
+          created_at?: string
+          dietary_preferences?: Json | null
           display_name?: string | null
+          gender?: string | null
+          height_cm?: number | null
+          id?: string
+          updated_at?: string
+          user_id: string
+          weight_kg?: number | null
+        }
+        Update: {
+          created_at?: string
+          dietary_preferences?: Json | null
+          display_name?: string | null
+          gender?: string | null
+          height_cm?: number | null
           id?: string
           updated_at?: string
           user_id?: string
+          weight_kg?: number | null
         }
         Relationships: []
       }

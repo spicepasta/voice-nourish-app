@@ -89,3 +89,25 @@ export function useAuth() {
   }
   return context;
 }
+
+export function useEmailVerification() {
+  const { user } = useAuth();
+  
+  const isEmailVerified = user?.email_confirmed_at !== null;
+  
+  const resendConfirmation = async () => {
+    if (!user?.email) return { error: 'No email found' };
+    
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: user.email,
+    });
+    
+    return { error };
+  };
+  
+  return {
+    isEmailVerified,
+    resendConfirmation
+  };
+}
