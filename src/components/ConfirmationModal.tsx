@@ -79,7 +79,7 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
       const bases: Record<number, any> = {};
       itemsToIndex.forEach((item, index) => {
         const qtyNumber = parseQuantityNumber(item.qty || '1');
-        const divisor = qtyNumber === 0 ? 1 : qtyNumber; // Avoid division by zero
+        const divisor = qtyNumber === 0 ? 1 : qtyNumber;
         bases[index] = {
           qtyUnit: getQuantityUnit(item.qty || '1 serving'),
           cal: (item.cal || 0) / divisor,
@@ -113,9 +113,13 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
 
   const handleAddNewItems = (newlyAnalyzed: AnalyzedResult) => {
     if (newlyAnalyzed?.items?.length > 0) {
-        const combinedItems = [...editItems, ...newlyAnalyzed.items];
-        setEditItems(combinedItems);
-        setBaseValues(calculateBaseValues(combinedItems));
+        // --- THE FIX: Use the functional update form to avoid stale state ---
+        setEditItems(prevItems => {
+            const combinedItems = [...prevItems, ...newlyAnalyzed.items];
+            // Also update base values right after updating items
+            setBaseValues(calculateBaseValues(combinedItems));
+            return combinedItems;
+        });
         toast({ title: "Item(s) Added", description: "The new items have been added to your meal." });
     }
     setNewItemText('');
