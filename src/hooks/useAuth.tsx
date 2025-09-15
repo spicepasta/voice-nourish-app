@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -6,9 +6,11 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  isEmailVerified: boolean;
   signUp: (email: string, password: string, displayName?: string) => Promise<{ error?: any }>;
   signIn: (email: string, password: string) => Promise<{ error?: any }>;
   signOut: () => Promise<void>;
+  resendConfirmation: () => Promise<{ error?: any }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -17,26 +19,66 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isEmailVerified, setIsEmailVerified] = useState(false);
 
+  const checkUser = useCallback(async () => {
+    try {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      
+      setSession(session);
+      const currentUser = session?.user ?? null;
+      setUser(currentUser);
+
+      // Explicitly check for email verification status
+      if (currentUser) {
+        // A user is verified if they have a confirmation timestamp OR if they signed up via an OAuth provider.
+        const verified = !!currentUser.email_confirmed_at || !!currentUser.app_metadata.provider;
+        setIsEmailVerified(verified);
+      } else {
+        setIsEmailVerified(false);
+      }
+    } catch (error) {
+      console.error("Error getting session:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  
   useEffect(() => {
-    // Set up auth state listener FIRST
+    checkUser(); // Initial check
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         setSession(session);
-        setUser(session?.user ?? null);
-        setLoading(false);
+        const currentUser = session?.user ?? null;
+        setUser(currentUser);
+        
+        if (currentUser) {
+          const verified = !!currentUser.email_confirmed_at || !!currentUser.app_metadata.provider;
+          setIsEmailVerified(verified);
+        } else {
+          setIsEmailVerified(false);
+        }
+
+        // Also refresh user data when they focus the window, to catch verification clicks in other tabs.
+        if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+            checkUser();
+        }
+
+        if (event === 'INITIAL_SESSION') {
+            setLoading(false);
+        }
       }
     );
 
-    // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+    window.addEventListener('focus', checkUser);
 
-    return () => subscription.unsubscribe();
-  }, []);
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('focus', checkUser);
+    };
+  }, [checkUser]);
 
   const signUp = async (email: string, password: string, displayName?: string) => {
     const redirectUrl = `${window.location.origin}/`;
@@ -66,18 +108,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await supabase.auth.signOut();
   };
 
+  const resendConfirmation = async () => {
+    if (!user) return { error: { message: "No user is logged in." } };
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: user.email!,
+    });
+    return { error };
+  };
+
   const value = {
     user,
     session,
     loading,
+    isEmailVerified,
     signUp,
     signIn,
-    signOut
+    signOut,
+    resendConfirmation,
   };
 
   return (
     <AuthContext.Provider value={value}>
-      {children}
+      {!loading && children}
     </AuthContext.Provider>
   );
 }
@@ -88,26 +141,4 @@ export function useAuth() {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
-}
-
-export function useEmailVerification() {
-  const { user } = useAuth();
-  
-  const isEmailVerified = user?.email_confirmed_at !== null;
-  
-  const resendConfirmation = async () => {
-    if (!user?.email) return { error: 'No email found' };
-    
-    const { error } = await supabase.auth.resend({
-      type: 'signup',
-      email: user.email,
-    });
-    
-    return { error };
-  };
-  
-  return {
-    isEmailVerified,
-    resendConfirmation
-  };
 }
