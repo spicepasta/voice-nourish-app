@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import Dashboard from "./pages/Dashboard";
 import AuthPage from "./pages/AuthPage";
 import HistoryPage from "./pages/HistoryPage"; // Make sure HistoryPage is imported
+import TrendsPage from "./pages/TrendsPage";
 import NotFound from "./pages/NotFound";
 // Import TrendsPage for the future step
 // import TrendsPage from "./pages/TrendsPage"; 
@@ -52,10 +53,7 @@ const App = () => (
             <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             {/* FIX: Add the route for the History/Ledger page */}
             <Route path="/history" element={<ProtectedRoute><HistoryPage /></ProtectedRoute>} />
-            
-            {/* We can also add the upcoming trends page route now */}
-            {/* <Route path="/trends" element={<ProtectedRoute><TrendsPage /></ProtectedRoute>} /> */}
-
+            <Route path="/trends" element={<ProtectedRoute><TrendsPage /></ProtectedRoute>} />
             <Route path="/auth" element={<PublicRoute><AuthPage /></PublicRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
