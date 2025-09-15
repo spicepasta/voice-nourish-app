@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useAuth, useEmailVerification } from '@/hooks/useAuth';
+import { useAuth } from '@/hooks/useAuth'; // Assuming useEmailVerification is exported from here too
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import * as Recharts from 'recharts';
-import { Mic, Plus, History, User, Bot, Loader2, TrendingUp, RefreshCw, AlertCircle, X } from 'lucide-react';
+import { Mic, Plus, History, User, Bot, Loader2, TrendingUp, AlertCircle, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -25,6 +25,7 @@ interface AnalyzedResult {
   items: any[];
   assumptions?: Assumption[];
   detected_time?: string | null;
+  meal_title?: string; // Added for smart meal names
 }
 
 interface DayData {
@@ -55,13 +56,12 @@ interface UserProfile {
   height_cm?: number;
   weight_kg?: number;
   gender?: string;
-  dietary_preferences?: any; // Changed from string[] to any to match Supabase Json type
+  dietary_preferences?: any;
 }
 
 // --- Dashboard Component ---
 const Dashboard = () => {
-  const { user, signOut } = useAuth();
-  const { isEmailVerified, resendConfirmation } = useEmailVerification();
+  const { user, signOut, isEmailVerified, resendConfirmation } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   
@@ -78,6 +78,8 @@ const Dashboard = () => {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [showProfileAlert, setShowProfileAlert] = useState(false);
   const [resendingEmail, setResendingEmail] = useState(false);
+  const [activePieIndex, setActivePieIndex] = useState<number | null>(null);
+
 
   // --- Data Fetching ---
   const loadTodayData = async () => {
@@ -123,7 +125,7 @@ const Dashboard = () => {
         .eq('user_id', user.id)
         .single();
 
-      if (error) {
+      if (error && error.code !== 'PGRST116') { // Ignore error if no profile found
         console.error('Error fetching profile:', error);
         return;
       }
@@ -131,19 +133,19 @@ const Dashboard = () => {
       setUserProfile(profile);
 
       // Check if health profile is incomplete
-      if (!profile.height_cm || !profile.weight_kg) {
-        if (profile.height_cm === null && profile.weight_kg === null) {
-          // First time user - show modal immediately
-          setShowHealthProfileModal(true);
-        } else {
-          // Existing user with incomplete profile - show alert
-          setShowProfileAlert(true);
-        }
+      if (profile && (!profile.height_cm || !profile.weight_kg)) {
+         setShowProfileAlert(true);
       }
+      
+      if (!profile) {
+        setShowHealthProfileModal(true)
+      }
+
     } catch (error) {
       console.error('Error in loadUserProfile:', error);
     }
   };
+
 
   useEffect(() => {
     if (user) {
@@ -155,7 +157,7 @@ const Dashboard = () => {
   // --- Event Handlers ---
   const getGreeting = () => {
     const hour = new Date().getHours();
-    const name = user?.user_metadata?.display_name || user?.email?.split('@')[0] || 'esteemed guest';
+    const name = userProfile?.display_name || user?.email?.split('@')[0] || 'esteemed guest';
     
     if (hour < 12) return `Good morning, ${name}`;
     if (hour < 17) return `Good afternoon, ${name}`;
@@ -183,16 +185,27 @@ const Dashboard = () => {
 
     setIsAnalyzingText(true);
     try {
-        const { data: result, error } = await supabase.functions.invoke('analyze', {
-          body: JSON.stringify({ text: manualEntry }), // Manually stringify the body
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Authentication required.");
+
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+        body: JSON.stringify({ text: manualEntry }),
       });
+      
+      const result = await response.json();
 
-        if (error) {
-            throw error;
-        }
+      if (!response.ok) {
+        throw new Error(result.details || result.error || 'Analysis failed.');
+      }
 
-        handleAnalysisComplete(result);
-        setManualEntry('');
+      handleAnalysisComplete(result);
+      setManualEntry('');
 
     } catch (error: any) {
         console.error('Error analyzing text entry:', error);
@@ -205,6 +218,7 @@ const Dashboard = () => {
         setIsAnalyzingText(false);
     }
   };
+
 
   const handleResendEmail = async () => {
     setResendingEmail(true);
@@ -260,16 +274,16 @@ const Dashboard = () => {
   ].filter(item => item.value > 0);
 
   // Enhanced tooltip formatter
-  const customTooltip = ({ active, payload }: any) => {
+  const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
-        <div className="bg-popover border border-border rounded-lg p-3 shadow-md">
-          <p className="font-medium">{data.name}</p>
-          <p className="text-sm">{data.value} cal</p>
-          <p className="text-sm">{data.grams}g {data.name}</p>
+        <div className="bg-popover border border-border rounded-lg p-3 shadow-md text-popover-foreground">
+          <p className="font-medium text-base">{data.name}</p>
+          <p className="text-sm text-foreground">{data.value} cal</p>
+          <p className="text-sm text-muted-foreground">{data.grams}g total</p>
           {data.name === 'Carbs' && (
-            <div className="text-xs text-muted-foreground mt-1">
+            <div className="text-xs text-muted-foreground mt-1 border-t border-border pt-1">
               <p>Fiber: {data.fiber}g</p>
               <p>Net Carbs: {data.netCarbs}g</p>
             </div>
@@ -279,6 +293,7 @@ const Dashboard = () => {
     }
     return null;
   };
+
 
   // --- Render Logic ---
   if (loading) {
@@ -296,26 +311,27 @@ const Dashboard = () => {
     <div className="min-h-screen bg-gradient-to-br from-background to-butler-parchment">
       {/* --- Email Verification Banner --- */}
       {user && !isEmailVerified && (
-        <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <AlertCircle className="h-4 w-4 text-yellow-600 mr-2" />
-              <span className="text-sm text-yellow-800">
-                Please verify your email address to secure your account.
-              </span>
+        <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-3 text-yellow-900 dark:bg-yellow-900/20 dark:border-yellow-800/50 dark:text-yellow-200">
+            <div className="container mx-auto flex items-center justify-between gap-4">
+                <div className="flex items-center">
+                    <AlertCircle className="h-4 w-4 mr-2" />
+                    <span className="text-sm ">
+                        Please verify your email address to secure your account.
+                    </span>
+                </div>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleResendEmail}
+                    disabled={resendingEmail}
+                    className="text-yellow-800 border-yellow-300 hover:bg-yellow-100 dark:text-yellow-200 dark:border-yellow-700 dark:hover:bg-yellow-900/30"
+                >
+                    {resendingEmail ? <Loader2 className="h-3 w-3 animate-spin" /> : "Resend Email"}
+                </Button>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleResendEmail}
-              disabled={resendingEmail}
-              className="text-yellow-800 border-yellow-300 hover:bg-yellow-100"
-            >
-              {resendingEmail ? <Loader2 className="h-3 w-3 animate-spin" /> : "Resend Email"}
-            </Button>
-          </div>
         </div>
       )}
+
 
       {/* --- Header --- */}
       <header className="sticky top-0 z-10 border-b border-border/50 bg-card/80 backdrop-blur-sm">
@@ -328,7 +344,7 @@ const Dashboard = () => {
             <p className="text-xs sm:text-sm text-muted-foreground whitespace-nowrap">{getGreeting()}</p>
           </div>
           <div className="flex items-center gap-1 sm:gap-2">
-            <NotificationCenter />
+             <NotificationCenter />
             <Button variant="outline" size="sm" onClick={() => navigate('/history')}>
               <History className="w-4 h-4 md:mr-2" />
               <span className="hidden md:inline">The Ledger</span>
@@ -343,30 +359,33 @@ const Dashboard = () => {
 
       {/* --- Profile Completion Alert --- */}
       {showProfileAlert && (
-        <Alert className="m-4 border-primary/20 bg-primary/5">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription className="flex items-center justify-between">
-            <span>Please complete your health profile to receive personalized nutritional insights.</span>
-            <div className="flex gap-2 ml-4">
-              <Button 
-                size="sm" 
-                onClick={() => setShowHealthProfileModal(true)}
-                className="h-8"
-              >
-                Complete Profile
-              </Button>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => setShowProfileAlert(false)}
-                className="h-8 w-8 p-0"
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
+        <div className="container mx-auto px-4 pt-4">
+          <Alert className="border-primary/20 bg-primary/5">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription className="flex items-center justify-between">
+              <span>Please complete your health profile to receive personalized nutritional insights.</span>
+              <div className="flex gap-2 ml-4">
+                <Button 
+                  size="sm" 
+                  onClick={() => setShowHealthProfileModal(true)}
+                  className="h-8"
+                >
+                  Complete Profile
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setShowProfileAlert(false)}
+                  className="h-8 w-8 p-0"
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            </AlertDescription>
+          </Alert>
+        </div>
       )}
+
 
       {/* --- Main Content --- */}
       <main className="container mx-auto px-4 sm:px-6 py-6 sm:py-8">
@@ -374,11 +393,10 @@ const Dashboard = () => {
           
           {/* --- Macro Chart Card --- */}
           <Card className="card-butler">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-butler-heading text-lg">Today's Nutritional Summary</CardTitle>
-                <div className="flex items-center gap-2">
-                  <Button
+             <CardHeader className="pb-3">
+               <div className="flex items-center justify-between">
+                 <CardTitle className="text-butler-heading text-lg">Today's Nutritional Summary</CardTitle>
+                 <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => navigate('/trends')}
@@ -387,69 +405,57 @@ const Dashboard = () => {
                     <TrendingUp className="w-4 h-4 mr-1" />
                     Trends
                   </Button>
-                </div>
-              </div>
-              <CardDescription>
-                {dayData.calories > 0 
-                  ? `${Math.round(dayData.calories)} calories consumed with precision`
-                  : "Your ledger awaits the first entry of the day"
-                }
-              </CardDescription>
-            </CardHeader>
+               </div>
+                <CardDescription>
+                  {dayData.calories > 0 
+                    ? `${Math.round(dayData.calories)} calories consumed with precision`
+                    : "Your ledger awaits the first entry of the day"
+                  }
+                </CardDescription>
+              </CardHeader>
             <CardContent>
               {pieData.length > 0 ? (
-                <div className="space-y-4">
-                  {/* Stats Grid */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-primary">{Math.round(dayData.calories)}</div>
-                      <div className="text-xs text-muted-foreground">Calories</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-chart-1">{Math.round(dayData.protein)}g</div>
-                      <div className="text-xs text-muted-foreground">Protein</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-chart-2">{Math.round(dayData.carbs)}g</div>
-                      <div className="text-xs text-muted-foreground">Carbs</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-chart-3">{Math.round(dayData.fat)}g</div>
-                      <div className="text-xs text-muted-foreground">Fat</div>
-                    </div>
-                  </div>
-                  
-                  {/* Interactive Chart */}
-                  <div className="h-56 sm:h-64">
-                    <Recharts.ResponsiveContainer width="100%" height="100%">
-                      <Recharts.PieChart>
-                        <Recharts.Pie
-                          data={pieData}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius="80%"
-                          innerRadius="50%"
-                        >
-                          {pieData.map((entry, index) => (
-                            <Recharts.Cell key={`cell-${index}`} fill={entry.color} />
-                          ))}
-                        </Recharts.Pie>
-                        <Recharts.Tooltip content={customTooltip} />
-                        <Recharts.Legend />
-                      </Recharts.PieChart>
-                    </Recharts.ResponsiveContainer>
-                  </div>
+                <div className="h-56 sm:h-64 cursor-pointer" onClick={(e) => {
+                    const pie = e.currentTarget.querySelector('.recharts-pie');
+                    if(pie) {
+                      const event = new MouseEvent('mouseover', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true,
+                      });
+                      pie.dispatchEvent(event);
+                    }
+                }}>
+                  <Recharts.ResponsiveContainer width="100%" height="100%">
+                    <Recharts.PieChart>
+                      <Recharts.Pie
+                        data={pieData}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius="80%"
+                        innerRadius="50%"
+                        activeIndex={activePieIndex}
+                        onMouseEnter={(_, index) => setActivePieIndex(index)}
+                        onMouseLeave={() => setActivePieIndex(null)}
+                      >
+                        {pieData.map((entry, index) => (
+                          <Recharts.Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Recharts.Pie>
+                      <Recharts.Tooltip content={<CustomTooltip />} />
+                      <Recharts.Legend />
+                    </Recharts.PieChart>
+                  </Recharts.ResponsiveContainer>
                 </div>
               ) : (
-                <div className="h-56 sm:h-64 flex items-center justify-center text-mused-foreground">
+                <div className="h-56 sm:h-64 flex items-center justify-center text-muted-foreground">
                   <div className="text-center">
                     <div className="w-16 h-16 border-2 border-dashed border-muted-foreground/30 rounded-full mx-auto mb-4 flex items-center justify-center">
                       <Plus className="w-8 h-8" />
                     </div>
                     <p>No meals recorded yet today</p>
-                    <p className="text-xs text-muted-foreground mt-1">Begin your first entry</p>
                   </div>
                 </div>
               )}
@@ -484,7 +490,7 @@ const Dashboard = () => {
               
               <div className="flex flex-col sm:flex-row gap-2">
                 <Input
-                  placeholder="A written note, e.g., 'I had a tomato sandwich for dinner last night'"
+                  placeholder="A written note, e.g., '150g chicken breast with a cup of rice'"
                   value={manualEntry}
                   onChange={(e) => setManualEntry(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleManualEntry()}
@@ -525,21 +531,25 @@ const Dashboard = () => {
         onRecordingComplete={handleAnalysisComplete}
       />
 
-      <ConfirmationModal
-        isOpen={isConfirmationModalOpen}
-        onClose={() => setIsConfirmationModalOpen(false)}
-        items={analyzedData?.items || []}
-        assumptions={analyzedData?.assumptions || []}
-        detectedTime={analyzedData?.detected_time}
-        onConfirm={handleMealConfirmed}
-      />
-
-      <HealthProfileModal
-        open={showHealthProfileModal}
-        onOpenChange={setShowHealthProfileModal}
-        onProfileComplete={handleProfileComplete}
-        userId={user?.id || ''}
-      />
+      {analyzedData && (
+        <ConfirmationModal
+          isOpen={isConfirmationModalOpen}
+          onClose={() => setIsConfirmationModalOpen(false)}
+          items={analyzedData.items}
+          assumptions={analyzedData.assumptions}
+          detectedTime={analyzedData.detected_time}
+          onConfirm={handleMealConfirmed}
+        />
+      )}
+      
+      {user && (
+        <HealthProfileModal
+          open={showHealthProfileModal}
+          onOpenChange={setShowHealthProfileModal}
+          onProfileComplete={handleProfileComplete}
+          userId={user.id}
+        />
+      )}
     </div>
   );
 };
