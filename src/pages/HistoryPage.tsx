@@ -131,7 +131,7 @@ const HistoryPage = () => {
     });
   };
 
-  if (loading && !daySummaries.length) {
+  if (loading && !daySummaries.length) { // Show loader only on initial load
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-butler-parchment">
         <div className="text-center">
@@ -246,7 +246,7 @@ const HistoryPage = () => {
               </Card>
 
               {/* Meals for Selected Date */}
-              {meals.length > 0 ? (
+              {meals.length > 0 && (
                 <div>
                   <h2 className="text-butler-heading text-xl font-semibold mb-4">
                     Recorded Meals
@@ -257,7 +257,7 @@ const HistoryPage = () => {
                     ))}
                   </div>
                 </div>
-              ) : null}
+              )}
             </div>
           </div>
         </div>
@@ -269,7 +269,7 @@ const HistoryPage = () => {
           isOpen={showAddMealModal}
           onClose={() => setShowAddMealModal(false)}
           onConfirm={handleAddMealConfirmed}
-          items={[]} // Start with a blank slate
+          items={[]} // Start with a blank slate for a new entry
           // Correctly pass the selected date to the modal
           detectedTime={selectedDate.toISOString()}
         />
