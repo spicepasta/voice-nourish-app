@@ -6,14 +6,14 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Calendar as CalendarIcon, Check, Edit3, Info, Mic, Loader2, Bot } from 'lucide-react';
+import { Calendar as CalendarIcon, Check, Info, Mic, Loader2, Bot, Trash2 } from 'lucide-react';
 import { Calendar } from '@/components/ui/calendar';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { generateMealName, getTimeOfDay, getTimeRangeForPeriod } from '@/utils/mealNaming';
-import RecordingModal from './RecordingModal'; // Import RecordingModal
+import RecordingModal from './RecordingModal';
 
 // --- Type Definitions ---
 export interface TokenItem {
@@ -79,17 +79,18 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
       const bases: Record<number, any> = {};
       itemsToIndex.forEach((item, index) => {
         const qtyNumber = parseQuantityNumber(item.qty || '1');
+        const divisor = qtyNumber === 0 ? 1 : qtyNumber; // Avoid division by zero
         bases[index] = {
           qtyUnit: getQuantityUnit(item.qty || '1 serving'),
-          cal: (item.cal || 0) / (qtyNumber || 1),
-          p: (item.p || 0) / (qtyNumber || 1),
-          c: (item.c || 0) / (qtyNumber || 1),
-          f: (item.f || 0) / (qtyNumber || 1),
-          fib: (item.fib || 0) / (qtyNumber || 1),
+          cal: (item.cal || 0) / divisor,
+          p: (item.p || 0) / divisor,
+          c: (item.c || 0) / divisor,
+          f: (item.f || 0) / divisor,
+          fib: (item.fib || 0) / divisor,
         };
         Object.keys(item).forEach(key => {
           if (!KNOWN_KEYS.has(key) && typeof item[key] === 'number') {
-            bases[index][key] = (item[key] as number) / (qtyNumber || 1);
+            bases[index][key] = (item[key] as number) / divisor;
           }
         });
       });
@@ -130,7 +131,10 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
 
         const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session.access_token}`,
+            },
             body: JSON.stringify({ text: newItemText }),
         });
         
@@ -171,16 +175,6 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
     updated[index] = currentItem;
     setEditItems(updated);
   };
-
-  const micronutrientKeys = useMemo(() => {
-    const keys = new Set<string>();
-    Object.values(baseValues).forEach(base => {
-        Object.keys(base).forEach(k => {
-            if (!KNOWN_KEYS.has(k) && k !== 'qtyUnit') keys.add(k);
-        });
-    });
-    return Array.from(keys);
-  }, [baseValues]);
   
   const removeFoodItem = (index: number) => {
     const newItems = editItems.filter((_, i) => i !== index);
@@ -248,19 +242,13 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
     }
   };
 
-  const updateItem = (index: number, field: string, value: string) => {
-    const updated = [...editItems];
-    (updated[index] as any)[field] = value;
-    setEditItems(updated);
-  };
-
   return (
     <>
       <Dialog open={isOpen} onOpenChange={onClose}>
         <DialogContent className="max-w-sm w-[92vw] sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-butler-heading">
-              {editMode ? "If I May Assist with Revisions" : "If I May Confirm"}
+              {editMode ? "If I May Assist with Revisions" : "Your Meal Summary"}
             </DialogTitle>
           </DialogHeader>
 
@@ -269,8 +257,8 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
               <Label className="text-sm font-medium">Items:</Label>
               {editItems.length > 0 ? (
                 editItems.map((item, index) => (
-                  <div key={index} className="space-y-2 rounded-lg border border-border/50 p-3">
-                    <div className="grid grid-cols-2 gap-2">
+                  <div key={index} className="space-y-3 rounded-lg border border-border/50 p-3 relative">
+                     <div className="grid grid-cols-[1fr,2fr] gap-3 items-start">
                         <div>
                             <Label htmlFor={`qty-${index}`} className="text-xs text-muted-foreground">Quantity</Label>
                             <div className="flex items-center gap-2">
@@ -281,30 +269,31 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                                 min="0"
                                 value={parseQuantityNumber(item.qty)}
                                 onChange={(e) => updateQuantity(index, parseFloat(e.target.value))}
-                                className="flex-1"
+                                className="flex-1 h-9"
                             />
-                            <span className="text-sm text-muted-foreground">{baseValues[index]?.qtyUnit}</span>
+                            <span className="text-sm text-muted-foreground whitespace-nowrap">{baseValues[index]?.qtyUnit}</span>
                             </div>
                         </div>
                         <div>
-                            <Label htmlFor={`name-${index}`} className="text-xs text-muted-foreground">Food Item</Label>
-                            <Input id={`name-${index}`} value={item.n || ''} onChange={(e) => updateItem(index, 'n', e.target.value)} />
+                            <Label className="text-xs text-muted-foreground">Food Item</Label>
+                            <p className="text-sm font-medium p-2 bg-muted/50 rounded-md min-h-[36px] whitespace-normal break-words">
+                                {item.n || 'N/A'}
+                            </p>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {['cal', 'p', 'c', 'f', 'fib', ...micronutrientKeys].map(nutrient => (
+                    <div className="grid grid-cols-3 md:grid-cols-5 gap-2">
+                      {['cal', 'p', 'c', 'f', 'fib'].map(nutrient => (
                         <div key={nutrient}>
-                          <Label className="text-xs text-muted-foreground capitalize">{nutrient.split('_')[0]}</Label>
-                          <Input value={(item as any)[nutrient] ?? ''} disabled className="bg-muted/50" />
+                          <Label className="text-xs text-muted-foreground capitalize">{nutrient}</Label>
+                          <Input value={(item as any)[nutrient] ?? ''} disabled className="bg-muted/50 h-8 text-xs" />
                         </div>
                       ))}
                     </div>
-                    {editItems.length > 0 && (
-                      <div className="text-right">
-                        <Button variant="ghost" size="sm" onClick={() => removeFoodItem(index)} className="px-2 text-destructive hover:text-destructive">× Remove</Button>
-                      </div>
-                    )}
+                    
+                    <Button variant="ghost" size="icon" onClick={() => removeFoodItem(index)} className="absolute top-1 right-1 h-6 w-6 text-muted-foreground hover:text-destructive">
+                        <Trash2 className="w-4 h-4" />
+                    </Button>
                   </div>
                 ))
               ) : (
@@ -315,22 +304,22 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
             </div>
 
             <div className="space-y-2 pt-2">
-                <Label className="text-sm font-medium flex items-center gap-2">
-                    <Edit3 className="w-4 h-4" /> Add More Items
-                </Label>
-                <div className="flex gap-2">
+                <div className="relative">
+                    <Bot className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                     <Input
-                        placeholder="e.g., '1 apple' or 'a glass of milk'"
+                        placeholder="e.g., 'A bowl of oats with blueberries and a black coffee...'"
                         value={newItemText}
                         onChange={(e) => setNewItemText(e.target.value)}
                         onKeyPress={(e) => e.key === 'Enter' && handleAddItemByText()}
                         disabled={isAnalyzingNewItem}
+                        className="pl-10 h-12 text-base"
                     />
-                    <Button onClick={handleAddItemByText} disabled={!newItemText.trim() || isAnalyzingNewItem} size="icon">
-                        {isAnalyzingNewItem ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bot className="w-4 h-4" />}
-                    </Button>
-                    <Button variant="outline" size="icon" onClick={() => setIsRecordingNewItem(true)}>
-                        <Mic className="w-4 h-4" />
+                    <Button 
+                        size="icon" 
+                        onClick={() => setIsRecordingNewItem(true)} 
+                        className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 bg-primary/90 hover:bg-primary rounded-full"
+                    >
+                        {isAnalyzingNewItem ? <Loader2 className="w-5 h-5 animate-spin" /> : <Mic className="w-5 h-5" />}
                     </Button>
                 </div>
             </div>
@@ -366,10 +355,10 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
             <>
               <Separator />
               <div className="flex justify-center">
-                <Popover open={showAssumptions} onOpenChange={setShowAssumptions}>
+                <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm" className="w-full max-w-xs">
-                      <Info className="w-4 h-4 mr-2" /> AI Assumptions
+                    <Button variant="ghost" size="sm" className="text-muted-foreground">
+                      <Info className="w-4 h-4 mr-2" /> View AI Assumptions
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-80 max-h-[50vh] overflow-y-auto">
