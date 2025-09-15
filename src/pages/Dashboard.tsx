@@ -184,8 +184,8 @@ const Dashboard = () => {
     setIsAnalyzingText(true);
     try {
         const { data: result, error } = await supabase.functions.invoke('analyze', {
-            body: { input: manualEntry },
-        });
+          body: JSON.stringify({ text: manualEntry }), // Manually stringify the body
+      });
 
         if (error) {
             throw error;
