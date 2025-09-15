@@ -372,16 +372,23 @@ const Dashboard = () => {
       <main className="container mx-auto px-4 sm:px-6 py-6 sm:py-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8 mb-8">
           
-          {/* --- Macro Chart Card (Clickable) --- */}
-          <Card 
-            className="card-butler hover-elevate cursor-pointer transition-all duration-200"
-            onClick={() => navigate('/trends')}
-          >
-            <CardHeader className="text-center">
-              <CardTitle className="text-butler-heading flex items-center justify-center gap-2">
-                Today's Nutritional Summary
-                <TrendingUp className="h-5 w-5 text-muted-foreground" />
-              </CardTitle>
+          {/* --- Macro Chart Card --- */}
+          <Card className="card-butler">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-butler-heading text-lg">Today's Nutritional Summary</CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => navigate('/trends')}
+                    className="h-8 px-2 text-primary hover:bg-primary/10"
+                  >
+                    <TrendingUp className="w-4 h-4 mr-1" />
+                    Trends
+                  </Button>
+                </div>
+              </div>
               <CardDescription>
                 {dayData.calories > 0 
                   ? `${Math.round(dayData.calories)} calories consumed with precision`
@@ -391,35 +398,58 @@ const Dashboard = () => {
             </CardHeader>
             <CardContent>
               {pieData.length > 0 ? (
-                <div className="h-56 sm:h-64">
-                  <Recharts.ResponsiveContainer width="100%" height="100%">
-                    <Recharts.PieChart>
-                      <Recharts.Pie
-                        data={pieData}
-                        dataKey="value"
-                        nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius="80%"
-                        innerRadius="50%"
-                      >
-                        {pieData.map((entry, index) => (
-                          <Recharts.Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Recharts.Pie>
-                      <Recharts.Tooltip content={customTooltip} />
-                      <Recharts.Legend />
-                    </Recharts.PieChart>
-                  </Recharts.ResponsiveContainer>
+                <div className="space-y-4">
+                  {/* Stats Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-primary">{Math.round(dayData.calories)}</div>
+                      <div className="text-xs text-muted-foreground">Calories</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-chart-1">{Math.round(dayData.protein)}g</div>
+                      <div className="text-xs text-muted-foreground">Protein</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-chart-2">{Math.round(dayData.carbs)}g</div>
+                      <div className="text-xs text-muted-foreground">Carbs</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-chart-3">{Math.round(dayData.fat)}g</div>
+                      <div className="text-xs text-muted-foreground">Fat</div>
+                    </div>
+                  </div>
+                  
+                  {/* Interactive Chart */}
+                  <div className="h-56 sm:h-64">
+                    <Recharts.ResponsiveContainer width="100%" height="100%">
+                      <Recharts.PieChart>
+                        <Recharts.Pie
+                          data={pieData}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius="80%"
+                          innerRadius="50%"
+                        >
+                          {pieData.map((entry, index) => (
+                            <Recharts.Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Recharts.Pie>
+                        <Recharts.Tooltip content={customTooltip} />
+                        <Recharts.Legend />
+                      </Recharts.PieChart>
+                    </Recharts.ResponsiveContainer>
+                  </div>
                 </div>
               ) : (
-                <div className="h-56 sm:h-64 flex items-center justify-center text-muted-foreground">
+                <div className="h-56 sm:h-64 flex items-center justify-center text-mused-foreground">
                   <div className="text-center">
                     <div className="w-16 h-16 border-2 border-dashed border-muted-foreground/30 rounded-full mx-auto mb-4 flex items-center justify-center">
                       <Plus className="w-8 h-8" />
                     </div>
                     <p>No meals recorded yet today</p>
-                    <p className="text-xs text-muted-foreground mt-1">Click to view trends</p>
+                    <p className="text-xs text-muted-foreground mt-1">Begin your first entry</p>
                   </div>
                 </div>
               )}

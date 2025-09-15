@@ -5,10 +5,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Check, Edit3, Info, RefreshCw } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Check, Edit3, Info, RefreshCw, Calendar, Clock } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { useToast } from '@/components/ui/use-toast';
+import { useToast } from '@/hooks/use-toast';
+import { generateMealName, getTimeOfDay, getTimeRangeForPeriod } from '@/utils/mealNaming';
 
 // Token-optimized item schema
 export interface TokenItem {
@@ -37,17 +39,19 @@ interface ConfirmationModalProps {
   onConfirm: (payload: { items: TokenItem[]; totals?: any; loggedAt?: string }) => void;
   editMode?: boolean; // For editing existing meals
   mealId?: string; // For updating existing meals
+  selectedDate?: Date; // For adding meals to specific dates
 }
 
 const KNOWN_KEYS = new Set(["qty", "n", "cal", "p", "c", "f", "fib"]);
 
-const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedTime, onConfirm, editMode = false, mealId }: ConfirmationModalProps) => {
+const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedTime, onConfirm, editMode = false, mealId, selectedDate }: ConfirmationModalProps) => {
   const [editItems, setEditItems] = useState<TokenItem[]>([]);
   const [baseValues, setBaseValues] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const [showAssumptions, setShowAssumptions] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
-  const [loggedAt, setLoggedAt] = useState<string>('');
+  const [selectedMealDate, setSelectedMealDate] = useState<string>('');
+  const [selectedTimeOfDay, setSelectedTimeOfDay] = useState<string>('');
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -67,6 +71,11 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
     if (isOpen) {
       const initialItems = Array.isArray(items) && items.length ? items.map(i => ({ ...i })) : [{ qty: '1 serving', n: '' }];
       setEditItems(initialItems);
+      
+      // Set default date and time
+      const targetDate = selectedDate || new Date();
+      setSelectedMealDate(targetDate.toISOString().split('T')[0]);
+      setSelectedTimeOfDay(getTimeOfDay(targetDate));
       
       // Calculate base per-unit values
       const bases: Record<string, any> = {};
@@ -94,7 +103,7 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
       
       setBaseValues(bases);
     }
-  }, [isOpen, items]);
+  }, [isOpen, items, selectedDate]);
 
   // Function to update quantity and recalculate nutrients
   const updateQuantity = (index: number, newQtyNumber: number) => {
@@ -264,8 +273,16 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
     try {
       // Compute meal-level totals client-side
       const totals = computeTotals(editItems);
-      const meal_name = editItems.map(i => `${i.qty} ${i.n}`.trim()).filter(Boolean).join(', ');
-      const description = meal_name;
+      const meal_name = generateMealName(editItems);
+      const description = editItems.map(i => `${i.qty} ${i.n}`.trim()).filter(Boolean).join(', ');
+      
+      // Calculate logged_at timestamp
+      const mealDate = new Date(selectedMealDate);
+      const timeRange = getTimeRangeForPeriod(selectedTimeOfDay);
+      const randomMinutes = Math.floor(Math.random() * 60); // Random minutes within the hour
+      mealDate.setHours(timeRange.start, randomMinutes, 0, 0);
+      
+      const loggedAtTimestamp = mealDate.toISOString();
 
       // Persist to Supabase
       if (editMode && mealId) {
@@ -298,11 +315,13 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
           fat: totals.fat,
           fiber: totals.fiber,
           micronutrients: totals.micronutrients,
+          logged_at: loggedAtTimestamp,
+          logged_date: selectedMealDate,
         });
         if (error) throw error;
       }
 
-      onConfirm({ items: editItems, totals });
+      onConfirm({ items: editItems, totals, loggedAt: loggedAtTimestamp });
     } catch (error) {
       console.error('Error saving meal:', error);
       toast({
@@ -447,6 +466,45 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
               <Edit3 className="w-4 h-4 mr-2" />
               Add Another Item
             </Button>
+
+            {/* Date & Time Selection - Only show for new meals */}
+            {!editMode && (
+              <>
+                <Separator />
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium flex items-center gap-2">
+                    <Calendar className="w-4 h-4" />
+                    Meal Date & Time
+                  </Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label htmlFor="meal-date" className="text-xs text-muted-foreground">Date</Label>
+                      <Input
+                        id="meal-date"
+                        type="date"
+                        value={selectedMealDate}
+                        onChange={(e) => setSelectedMealDate(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="time-of-day" className="text-xs text-muted-foreground">Time of Day</Label>
+                      <Select value={selectedTimeOfDay} onValueChange={setSelectedTimeOfDay}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="morning">Morning</SelectItem>
+                          <SelectItem value="noon">Noon</SelectItem>
+                          <SelectItem value="afternoon">Afternoon</SelectItem>
+                          <SelectItem value="evening">Evening</SelectItem>
+                          <SelectItem value="night">Night</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Assumptions Section */}
@@ -469,9 +527,8 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                       </div>
                       <div className="space-y-2 max-h-[40vh] sm:max-h-48 overflow-y-auto">
                         {assumptions.map((assumption, index) => (
-                          <div key={index} className="border-l-2 border-primary/20 pl-3 py-1">
-                            <div className="text-xs font-medium text-primary">{assumption.type}</div>
-                            <div className="text-xs text-muted-foreground">{assumption.description}</div>
+                          <div key={index} className="p-2 bg-muted/50 rounded text-xs">
+                            <strong className="text-primary">{assumption.type}:</strong> {assumption.description}
                           </div>
                         ))}
                       </div>

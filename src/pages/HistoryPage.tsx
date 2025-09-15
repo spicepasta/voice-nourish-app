@@ -4,10 +4,12 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Calendar } from '@/components/ui/calendar';
-import { ArrowLeft, Calendar as CalendarIcon } from 'lucide-react';
+import { ArrowLeft, Calendar as CalendarIcon, Plus } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import MealCard from '@/components/MealCard';
+import ConfirmationModal from '@/components/ConfirmationModal';
 import { format } from 'date-fns';
+import { useToast } from '@/hooks/use-toast';
 
 interface Meal {
   id: string;
@@ -38,6 +40,8 @@ const HistoryPage = () => {
   const [meals, setMeals] = useState<Meal[]>([]);
   const [daySummaries, setDaySummaries] = useState<DaySummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showAddMealModal, setShowAddMealModal] = useState(false);
+  const { toast } = useToast();
 
   const loadMealsForDate = async (date: Date) => {
     if (!user) return;
@@ -131,6 +135,20 @@ const HistoryPage = () => {
 
   const selectedDateSummary = getDateSummary(selectedDate);
 
+  const handleAddMeal = () => {
+    setShowAddMealModal(true);
+  };
+
+  const handleMealAdded = () => {
+    setShowAddMealModal(false);
+    loadMealsForDate(selectedDate);
+    loadHistorySummary();
+    toast({
+      title: "Meal added",
+      description: "Your meal has been recorded successfully."
+    });
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-butler-parchment">
@@ -207,11 +225,22 @@ const HistoryPage = () => {
                   <CardTitle className="text-butler-heading">
                     {format(selectedDate, 'EEEE, MMMM d, yyyy')}
                   </CardTitle>
-                  <CardDescription>
-                    {selectedDateSummary 
-                      ? `${selectedDateSummary.mealCount} meal${selectedDateSummary.mealCount !== 1 ? 's' : ''} recorded`
-                      : "No entries recorded for this date"
-                    }
+                  <CardDescription className="flex items-center justify-between">
+                    <span>
+                      {selectedDateSummary 
+                        ? `${selectedDateSummary.mealCount} meal${selectedDateSummary.mealCount !== 1 ? 's' : ''} recorded`
+                        : "No entries recorded for this date"
+                      }
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleAddMeal}
+                      className="h-8 px-2 text-primary hover:bg-primary/10"
+                    >
+                      <Plus className="w-4 h-4 mr-1" />
+                      Add Meal
+                    </Button>
                   </CardDescription>
                 </CardHeader>
                 {selectedDateSummary && (
@@ -272,9 +301,14 @@ const HistoryPage = () => {
                     <p className="text-muted-foreground">
                       No meals were recorded on this date.
                     </p>
-                    <p className="text-sm text-muted-foreground mt-2">
-                      Perhaps consider logging your next meal?
-                    </p>
+                    <Button
+                      onClick={handleAddMeal}
+                      variant="outline"
+                      className="mt-4"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add a meal for this date
+                    </Button>
                   </CardContent>
                 </Card>
               )}
@@ -282,6 +316,15 @@ const HistoryPage = () => {
           </div>
         </div>
       </main>
+
+      {/* Add Meal Modal */}
+      <ConfirmationModal
+        isOpen={showAddMealModal}
+        onClose={() => setShowAddMealModal(false)}
+        items={[{ qty: '1 serving', n: '' }]}
+        onConfirm={handleMealAdded}
+        selectedDate={selectedDate}
+      />
     </div>
   );
 };
