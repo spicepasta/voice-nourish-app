@@ -131,7 +131,7 @@ const HistoryPage = () => {
     });
   };
 
-  if (loading && !daySummaries.length) { // Show loader only on initial load
+  if (loading && !daySummaries.length) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-butler-parchment">
         <div className="text-center">
@@ -269,9 +269,8 @@ const HistoryPage = () => {
           isOpen={showAddMealModal}
           onClose={() => setShowAddMealModal(false)}
           onConfirm={handleAddMealConfirmed}
-          // We pass an empty items array so the user starts fresh
-          items={[]} 
-          // Pass the selected date to pre-fill it in the modal
+          items={[]} // Start with a blank slate
+          // Correctly pass the selected date to the modal
           detectedTime={selectedDate.toISOString()}
         />
       )}
