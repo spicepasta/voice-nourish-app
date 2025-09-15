@@ -6,13 +6,16 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Check, Edit3, Info, RefreshCw, Calendar, Clock } from 'lucide-react';
+import { Calendar as CalendarIcon, Check, Edit3, Info, Mic, Loader2, Bot } from 'lucide-react';
+import { Calendar } from '@/components/ui/calendar';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { format } from 'date-fns';
 import { generateMealName, getTimeOfDay, getTimeRangeForPeriod } from '@/utils/mealNaming';
+import RecordingModal from './RecordingModal'; // Import RecordingModal
 
-// Token-optimized item schema
+// --- Type Definitions ---
 export interface TokenItem {
   qty: string;
   n: string;
@@ -21,7 +24,6 @@ export interface TokenItem {
   c?: number;
   f?: number;
   fib?: number;
-  // Micronutrients: [abbr]_[unit]
   [key: string]: string | number | undefined;
 }
 
@@ -30,266 +32,194 @@ export interface AssumptionItem {
   description: string;
 }
 
+interface AnalyzedResult {
+  items: TokenItem[];
+  assumptions?: AssumptionItem[];
+  meal_title?: string;
+}
+
 interface ConfirmationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  items: TokenItem[]; // Items from edge function
-  assumptions?: AssumptionItem[]; // AI assumptions
-  detectedTime?: string | null; // AI-detected time from the meal description
-  onConfirm: (payload: { items: TokenItem[]; totals?: any; loggedAt?: string }) => void;
-  editMode?: boolean; // For editing existing meals
-  mealId?: string; // For updating existing meals
-  selectedDate?: Date; // For adding meals to specific dates
+  items: TokenItem[];
+  assumptions?: AssumptionItem[];
+  detectedTime?: string | null;
+  onConfirm: () => void;
+  editMode?: boolean;
+  mealId?: string;
 }
 
 const KNOWN_KEYS = new Set(["qty", "n", "cal", "p", "c", "f", "fib"]);
 
-const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedTime, onConfirm, editMode = false, mealId, selectedDate }: ConfirmationModalProps) => {
+const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedTime, onConfirm, editMode = false, mealId }: ConfirmationModalProps) => {
   const [editItems, setEditItems] = useState<TokenItem[]>([]);
-  const [baseValues, setBaseValues] = useState<Record<string, any>>({});
+  const [baseValues, setBaseValues] = useState<Record<number, any>>({});
   const [loading, setLoading] = useState(false);
   const [showAssumptions, setShowAssumptions] = useState(false);
-  const [reanalyzing, setReanalyzing] = useState(false);
-  const [selectedMealDate, setSelectedMealDate] = useState<string>('');
+  const [selectedMealDate, setSelectedMealDate] = useState<Date>(new Date());
   const [selectedTimeOfDay, setSelectedTimeOfDay] = useState<string>('');
+  
+  const [newItemText, setNewItemText] = useState('');
+  const [isAnalyzingNewItem, setIsAnalyzingNewItem] = useState(false);
+  const [isRecordingNewItem, setIsRecordingNewItem] = useState(false);
+
   const { user } = useAuth();
   const { toast } = useToast();
 
-  // Helper function to parse quantity number from string like "2 slices" -> 2
   const parseQuantityNumber = (qtyString: string): number => {
-    const match = qtyString.match(/^(\d*\.?\d+)/);
+    const match = String(qtyString).match(/^(\d*\.?\d+)/);
     return match ? parseFloat(match[1]) : 1;
   };
 
-  // Helper function to get quantity unit from string like "2 slices" -> "slices"
   const getQuantityUnit = (qtyString: string): string => {
-    return qtyString.replace(/^(\d*\.?\d+)\s*/, '').trim() || 'serving';
+    return String(qtyString).replace(/^(\d*\.?\d+)\s*/, '').trim();
   };
-
-  // Initialize local editable items and calculate base values whenever modal opens
-  useEffect(() => {
-    if (isOpen) {
-      const initialItems = Array.isArray(items) && items.length ? items.map(i => ({ ...i })) : [{ qty: '1 serving', n: '' }];
-      setEditItems(initialItems);
-      
-      // Set default date and time
-      const targetDate = selectedDate || new Date();
-      setSelectedMealDate(targetDate.toISOString().split('T')[0]);
-      setSelectedTimeOfDay(getTimeOfDay(targetDate));
-      
-      // Calculate base per-unit values
-      const bases: Record<string, any> = {};
-      initialItems.forEach((item, index) => {
+  
+  const calculateBaseValues = (itemsToIndex: TokenItem[]) => {
+      const bases: Record<number, any> = {};
+      itemsToIndex.forEach((item, index) => {
         const qtyNumber = parseQuantityNumber(item.qty || '1');
-        const qtyUnit = getQuantityUnit(item.qty || '1 serving');
-        
         bases[index] = {
-          qtyNumber,
-          qtyUnit,
-          cal: (item.cal || 0) / qtyNumber,
-          p: (item.p || 0) / qtyNumber,
-          c: (item.c || 0) / qtyNumber,
-          f: (item.f || 0) / qtyNumber,
-          fib: (item.fib || 0) / qtyNumber,
+          qtyUnit: getQuantityUnit(item.qty || '1 serving'),
+          cal: (item.cal || 0) / (qtyNumber || 1),
+          p: (item.p || 0) / (qtyNumber || 1),
+          c: (item.c || 0) / (qtyNumber || 1),
+          f: (item.f || 0) / (qtyNumber || 1),
+          fib: (item.fib || 0) / (qtyNumber || 1),
         };
-        
-        // Handle micronutrients
         Object.keys(item).forEach(key => {
           if (!KNOWN_KEYS.has(key) && typeof item[key] === 'number') {
-            bases[index][key] = (item[key] as number) / qtyNumber;
+            bases[index][key] = (item[key] as number) / (qtyNumber || 1);
           }
         });
       });
-      
-      setBaseValues(bases);
-    }
-  }, [isOpen, items, selectedDate]);
+      return bases;
+  }
 
-  // Function to update quantity and recalculate nutrients
+  useEffect(() => {
+    if (isOpen) {
+      const initialItems = Array.isArray(items) && items.length > 0 ? items.map(i => ({ ...i })) : [];
+      setEditItems(initialItems);
+      
+      const targetDate = detectedTime ? new Date(detectedTime) : new Date();
+      setSelectedMealDate(targetDate);
+      setSelectedTimeOfDay(getTimeOfDay(targetDate));
+      
+      setBaseValues(calculateBaseValues(initialItems));
+      setNewItemText('');
+    }
+  }, [isOpen, items, detectedTime]);
+
+  const handleAddNewItems = (newlyAnalyzed: AnalyzedResult) => {
+    if (newlyAnalyzed?.items?.length > 0) {
+        const combinedItems = [...editItems, ...newlyAnalyzed.items];
+        setEditItems(combinedItems);
+        setBaseValues(calculateBaseValues(combinedItems));
+        toast({ title: "Item(s) Added", description: "The new items have been added to your meal." });
+    }
+    setNewItemText('');
+    setIsRecordingNewItem(false);
+  };
+
+  const handleAddItemByText = async () => {
+    if (!newItemText.trim()) return;
+    setIsAnalyzingNewItem(true);
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw new Error("Authentication required.");
+
+        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+            body: JSON.stringify({ text: newItemText }),
+        });
+        
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.details || 'Failed to analyze item.');
+        
+        handleAddNewItems(result);
+
+    } catch (error: any) {
+        toast({ variant: "destructive", title: "Analysis Failed", description: error.message });
+    } finally {
+        setIsAnalyzingNewItem(false);
+    }
+  };
+
   const updateQuantity = (index: number, newQtyNumber: number) => {
+    if (isNaN(newQtyNumber) || newQtyNumber < 0) return;
+
     const base = baseValues[index];
     if (!base) return;
-    
+
     const updated = [...editItems];
-    const newQty = `${newQtyNumber} ${base.qtyUnit}`;
+    const currentItem = { ...updated[index] };
     
-    updated[index] = {
-      ...updated[index],
-      qty: newQty,
-      cal: Math.round((base.cal * newQtyNumber) * 100) / 100,
-      p: Math.round((base.p * newQtyNumber) * 100) / 100,
-      c: Math.round((base.c * newQtyNumber) * 100) / 100,
-      f: Math.round((base.f * newQtyNumber) * 100) / 100,
-      fib: Math.round((base.fib * newQtyNumber) * 100) / 100,
-    };
-    
-    // Update micronutrients
+    currentItem.qty = `${newQtyNumber} ${base.qtyUnit}`;
+    currentItem.cal = parseFloat((base.cal * newQtyNumber).toFixed(2));
+    currentItem.p = parseFloat((base.p * newQtyNumber).toFixed(2));
+    currentItem.c = parseFloat((base.c * newQtyNumber).toFixed(2));
+    currentItem.f = parseFloat((base.f * newQtyNumber).toFixed(2));
+    currentItem.fib = parseFloat((base.fib * newQtyNumber).toFixed(2));
+
     Object.keys(base).forEach(key => {
-      if (!KNOWN_KEYS.has(key) && key !== 'qtyNumber' && key !== 'qtyUnit' && typeof base[key] === 'number') {
-        updated[index][key] = Math.round((base[key] * newQtyNumber) * 100) / 100;
+      if (!KNOWN_KEYS.has(key) && key !== 'qtyUnit') {
+        (currentItem as any)[key] = parseFloat((base[key] * newQtyNumber).toFixed(2));
       }
     });
-    
+
+    updated[index] = currentItem;
     setEditItems(updated);
   };
 
   const micronutrientKeys = useMemo(() => {
     const keys = new Set<string>();
-    for (const it of editItems) {
-      Object.keys(it).forEach(k => {
-        if (!KNOWN_KEYS.has(k) && /^(?:[a-z]{1,4})_(?:mg|mcg|iu|g|mgdL|mmolL)$/i.test(k)) keys.add(k);
-      });
-    }
+    Object.values(baseValues).forEach(base => {
+        Object.keys(base).forEach(k => {
+            if (!KNOWN_KEYS.has(k) && k !== 'qtyUnit') keys.add(k);
+        });
+    });
     return Array.from(keys);
-  }, [editItems]);
-
-  const updateItem = (index: number, field: string, value: string | number) => {
-    const updated = [...editItems];
-    updated[index] = { ...updated[index], [field]: value };
-    setEditItems(updated);
-  };
-
-  const addFoodItem = () => {
-    const newIndex = editItems.length;
-    const newItem = { qty: '1 serving', n: '' };
-    setEditItems([...editItems, newItem]);
-    
-    // Add base values for the new item
-    setBaseValues(prev => ({
-      ...prev,
-      [newIndex]: {
-        qtyNumber: 1,
-        qtyUnit: 'serving',
-        cal: 0,
-        p: 0,
-        c: 0,
-        f: 0,
-        fib: 0,
-      }
-    }));
-  };
-
+  }, [baseValues]);
+  
   const removeFoodItem = (index: number) => {
     const newItems = editItems.filter((_, i) => i !== index);
     setEditItems(newItems);
-    
-    // Clean up base values and reindex them
-    const newBaseValues: Record<string, any> = {};
-    Object.keys(baseValues).forEach((key, i) => {
-      const keyIndex = parseInt(key);
-      if (keyIndex < index) {
-        newBaseValues[keyIndex] = baseValues[key];
-      } else if (keyIndex > index) {
-        newBaseValues[keyIndex - 1] = baseValues[key];
-      }
-    });
-    setBaseValues(newBaseValues);
-  };
-
-  const reanalyzeItems = async () => {
-    if (!editItems.length) return;
-    
-    setReanalyzing(true);
-    try {
-      // Create text description from current items
-      const textDescription = editItems.map(item => `${item.qty} ${item.n}`).join(', ');
-      
-      const { data: result, error } = await supabase.functions.invoke('analyze', {
-        body: { text: textDescription },
-      });
-
-      if (error) {
-        console.error('Analysis error:', error);
-        toast({ variant: 'destructive', title: 'Analysis Error', description: 'Failed to analyze meal. Please try again.' });
-        return;
-      }
-
-      if (result?.items && result.items.length > 0) {
-        // Update nutritional values while preserving user-edited quantities and names
-        const updatedItems = editItems.map((currentItem, index) => {
-          const aiItem = result.items[index];
-          if (aiItem) {
-            return {
-              ...currentItem,
-              // Keep user's quantity and name, update nutritional values
-              cal: aiItem.cal || currentItem.cal,
-              p: aiItem.p || currentItem.p,
-              c: aiItem.c || currentItem.c,
-              f: aiItem.f || currentItem.f,
-              fib: aiItem.fib || currentItem.fib,
-              // Update micronutrients
-              ...Object.keys(aiItem).reduce((acc, key) => {
-                if (!KNOWN_KEYS.has(key) && typeof aiItem[key] === 'number') {
-                  acc[key] = aiItem[key];
-                }
-                return acc;
-              }, {} as Record<string, number>)
-            };
-          }
-          return currentItem;
-        });
-        
-        setEditItems(updatedItems);
-        toast({ title: 'Success', description: 'Nutritional values updated based on current items.' });
-      }
-    } catch (error) {
-      console.error('Error reanalyzing items:', error);
-      toast({ variant: 'destructive', title: 'Analysis Error', description: 'Failed to analyze meal. Please try again.' });
-    } finally {
-      setReanalyzing(false);
-    }
+    setBaseValues(calculateBaseValues(newItems));
   };
 
   const computeTotals = (list: TokenItem[]) => {
-    const totals = list.reduce(
+    return list.reduce(
       (acc, it) => {
         acc.total_calories += Number(it.cal || 0);
         acc.protein += Number(it.p || 0);
         acc.carbs += Number(it.c || 0);
         acc.fat += Number(it.f || 0);
         acc.fiber += Number(it.fib || 0);
-        // Aggregate micronutrients
         for (const [k, v] of Object.entries(it)) {
           if (!KNOWN_KEYS.has(k) && typeof v === 'number') {
-            acc.micronutrients[k] = (acc.micronutrients[k] || 0) + v;
+            (acc.micronutrients as any)[k] = ((acc.micronutrients as any)[k] || 0) + v;
           }
         }
         return acc;
       },
-      { total_calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, micronutrients: {} as Record<string, number> }
+      { total_calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, micronutrients: {} }
     );
-    return totals;
   };
-
+  
   const handleConfirm = async () => {
     if (!user) return;
-    const invalid = editItems.some(it => !it.n || !it.qty);
-    if (invalid) {
-      toast({ variant: 'destructive', title: 'Missing details', description: 'Please fill in quantity and name for each item.' });
-      return;
-    }
-
     setLoading(true);
     try {
-      // Compute meal-level totals client-side
-      const totals = computeTotals(editItems);
-      const meal_name = generateMealName(editItems);
-      const description = editItems.map(i => `${i.qty} ${i.n}`.trim()).filter(Boolean).join(', ');
-      
-      // Calculate logged_at timestamp
-      const mealDate = new Date(selectedMealDate);
-      const timeRange = getTimeRangeForPeriod(selectedTimeOfDay);
-      const randomMinutes = Math.floor(Math.random() * 60); // Random minutes within the hour
-      mealDate.setHours(timeRange.start, randomMinutes, 0, 0);
-      
-      const loggedAtTimestamp = mealDate.toISOString();
+        const totals = computeTotals(editItems);
+        const meal_name = generateMealName(editItems);
+        const description = editItems.map(i => `${i.qty} ${i.n}`.trim()).join(', ');
 
-      // Persist to Supabase
-      if (editMode && mealId) {
-        // Update existing meal
-        const { error } = await supabase
-          .from('meals')
-          .update({
+        const finalDate = new Date(selectedMealDate);
+        const timeRange = getTimeRangeForPeriod(selectedTimeOfDay);
+        finalDate.setHours(timeRange.start, Math.floor(Math.random() * 60), 0, 0);
+
+        const mealData = {
             meal_name,
             description,
             total_calories: totals.total_calories,
@@ -298,216 +228,140 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
             fat: totals.fat,
             fiber: totals.fiber,
             micronutrients: totals.micronutrients,
-          })
-          .eq('id', mealId)
-          .eq('user_id', user.id);
+            logged_at: finalDate.toISOString(),
+            logged_date: finalDate.toISOString().split('T')[0],
+        };
 
-        if (error) throw error;
-      } else {
-        // Insert new meal
-        const { error } = await supabase.from('meals').insert({
-          user_id: user.id,
-          meal_name,
-          description,
-          total_calories: totals.total_calories,
-          protein: totals.protein,
-          carbs: totals.carbs,
-          fat: totals.fat,
-          fiber: totals.fiber,
-          micronutrients: totals.micronutrients,
-          logged_at: loggedAtTimestamp,
-          logged_date: selectedMealDate,
-        });
-        if (error) throw error;
-      }
-
-      onConfirm({ items: editItems, totals, loggedAt: loggedAtTimestamp });
+        if (editMode && mealId) {
+            const { error } = await supabase.from('meals').update(mealData).eq('id', mealId);
+            if (error) throw error;
+        } else {
+            const { error } = await supabase.from('meals').insert({ ...mealData, user_id: user.id });
+            if (error) throw error;
+        }
+        onConfirm();
     } catch (error) {
-      console.error('Error saving meal:', error);
-      toast({
-        variant: 'destructive',
-        title: 'Recording Error',
-        description: 'Unable to save your meal. Please try again.'
-      });
+        console.error('Error saving meal:', error);
+        toast({ variant: 'destructive', title: 'Recording Error', description: 'Unable to save your meal.' });
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
   };
 
+  const updateItem = (index: number, field: string, value: string) => {
+    const updated = [...editItems];
+    (updated[index] as any)[field] = value;
+    setEditItems(updated);
+  };
+
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-sm w-[92vw] sm:max-w-lg max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="text-butler-heading">
-            {editMode ? "If I May Assist with Revisions" : "If I May Confirm"}
-          </DialogTitle>
-          <DialogDescription className="text-butler-body">
-            {editMode 
-              ? "Modify your meal details as desired."
-              : "Review your items. Adjust quantities, names, or macros before I record them."
-            }
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="max-w-sm w-[92vw] sm:max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-butler-heading">
+              {editMode ? "If I May Assist with Revisions" : "If I May Confirm"}
+            </DialogTitle>
+          </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-3">
-            <Label className="text-sm font-medium">Items:</Label>
-            {editItems.map((item, index) => (
-              <div key={index} className="space-y-2 rounded-lg border border-border/50 p-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label htmlFor={`qty-${index}`} className="text-xs text-muted-foreground">Quantity</Label>
-                    <div className="flex items-center gap-1">
-                      <Input 
-                        id={`qty-${index}`} 
-                        type="number" 
-                        step="0.1"
-                        min="0.1"
-                        value={baseValues[index]?.qtyNumber || parseQuantityNumber(item.qty || '1')} 
-                        onChange={(e) => updateQuantity(index, parseFloat(e.target.value) || 0.1)} 
-                        placeholder="1" 
-                        className="flex-1"
-                      />
-                      <span className="text-xs text-muted-foreground whitespace-nowrap">
-                        {baseValues[index]?.qtyUnit || getQuantityUnit(item.qty || '1 serving')}
-                      </span>
+          <div className="space-y-4">
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Items:</Label>
+              {editItems.length > 0 ? (
+                editItems.map((item, index) => (
+                  <div key={index} className="space-y-2 rounded-lg border border-border/50 p-3">
+                    <div className="grid grid-cols-2 gap-2">
+                        <div>
+                            <Label htmlFor={`qty-${index}`} className="text-xs text-muted-foreground">Quantity</Label>
+                            <div className="flex items-center gap-2">
+                            <Input
+                                id={`qty-${index}`}
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={parseQuantityNumber(item.qty)}
+                                onChange={(e) => updateQuantity(index, parseFloat(e.target.value))}
+                                className="flex-1"
+                            />
+                            <span className="text-sm text-muted-foreground">{baseValues[index]?.qtyUnit}</span>
+                            </div>
+                        </div>
+                        <div>
+                            <Label htmlFor={`name-${index}`} className="text-xs text-muted-foreground">Food Item</Label>
+                            <Input id={`name-${index}`} value={item.n || ''} onChange={(e) => updateItem(index, 'n', e.target.value)} />
+                        </div>
                     </div>
-                  </div>
-                  <div>
-                    <Label htmlFor={`name-${index}`} className="text-xs text-muted-foreground">Food Item</Label>
-                    <Input id={`name-${index}`} value={item.n || ''} onChange={(e) => updateItem(index, 'n', e.target.value)} placeholder="e.g., Whole grain toast" />
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-4 gap-2">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Cal</Label>
-                    <Input 
-                      type="number" 
-                      inputMode="decimal" 
-                      value={item.cal ?? ''} 
-                      placeholder="160" 
-                      disabled
-                      className="bg-muted"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">P (g)</Label>
-                    <Input 
-                      type="number" 
-                      inputMode="decimal" 
-                      value={item.p ?? ''} 
-                      placeholder="8" 
-                      disabled
-                      className="bg-muted"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">C (g)</Label>
-                    <Input 
-                      type="number" 
-                      inputMode="decimal" 
-                      value={item.c ?? ''} 
-                      placeholder="30" 
-                      disabled
-                      className="bg-muted"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground">F (g)</Label>
-                    <Input 
-                      type="number" 
-                      inputMode="decimal" 
-                      value={item.f ?? ''} 
-                      placeholder="2" 
-                      disabled
-                      className="bg-muted"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-4 gap-2">
-                  <div>
-                    <Label className="text-xs text-muted-foreground">Fib (g)</Label>
-                    <Input 
-                      type="number" 
-                      inputMode="decimal" 
-                      value={item.fib ?? ''} 
-                      placeholder="6" 
-                      disabled
-                      className="bg-muted"
-                    />
-                  </div>
-                  {/* Render micronutrients present on any item */}
-                  {micronutrientKeys.map((key) => (
-                    <div key={key}>
-                      <Label className="text-xs text-muted-foreground">{key}</Label>
-                      <Input 
-                        type="number" 
-                        inputMode="decimal" 
-                        value={(item[key] as number) ?? ''} 
-                        placeholder="0" 
-                        disabled
-                        className="bg-muted"
-                      />
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {['cal', 'p', 'c', 'f', 'fib', ...micronutrientKeys].map(nutrient => (
+                        <div key={nutrient}>
+                          <Label className="text-xs text-muted-foreground capitalize">{nutrient.split('_')[0]}</Label>
+                          <Input value={(item as any)[nutrient] ?? ''} disabled className="bg-muted/50" />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-
-                {editItems.length > 1 && (
-                  <div className="text-right">
-                    <Button variant="ghost" size="sm" onClick={() => removeFoodItem(index)} className="px-2 text-destructive hover:text-destructive">× Remove</Button>
+                    {editItems.length > 0 && (
+                      <div className="text-right">
+                        <Button variant="ghost" size="sm" onClick={() => removeFoodItem(index)} className="px-2 text-destructive hover:text-destructive">× Remove</Button>
+                      </div>
+                    )}
                   </div>
-                )}
+                ))
+              ) : (
+                <div className="text-center text-sm text-muted-foreground py-4 border-2 border-dashed rounded-lg">
+                  No items added yet. Use the section below to add your first item.
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2 pt-2">
+                <Label className="text-sm font-medium flex items-center gap-2">
+                    <Edit3 className="w-4 h-4" /> Add More Items
+                </Label>
+                <div className="flex gap-2">
+                    <Input
+                        placeholder="e.g., '1 apple' or 'a glass of milk'"
+                        value={newItemText}
+                        onChange={(e) => setNewItemText(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && handleAddItemByText()}
+                        disabled={isAnalyzingNewItem}
+                    />
+                    <Button onClick={handleAddItemByText} disabled={!newItemText.trim() || isAnalyzingNewItem} size="icon">
+                        {isAnalyzingNewItem ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bot className="w-4 h-4" />}
+                    </Button>
+                    <Button variant="outline" size="icon" onClick={() => setIsRecordingNewItem(true)}>
+                        <Mic className="w-4 h-4" />
+                    </Button>
+                </div>
+            </div>
+            
+            <Separator />
+            <div className="space-y-2">
+              <Label className="text-sm font-medium flex items-center gap-2"><CalendarIcon className="w-4 h-4" /> Meal Date & Time</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Popover>
+                    <PopoverTrigger asChild>
+                        <Button variant="outline" className="font-normal justify-start">
+                           <span>{format(selectedMealDate, 'PPP')}</span>
+                        </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                        <Calendar mode="single" selected={selectedMealDate} onSelect={(date) => date && setSelectedMealDate(date)} initialFocus />
+                    </PopoverContent>
+                </Popover>
+                <Select value={selectedTimeOfDay} onValueChange={setSelectedTimeOfDay}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="morning">Morning</SelectItem>
+                        <SelectItem value="noon">Noon</SelectItem>
+                        <SelectItem value="afternoon">Afternoon</SelectItem>
+                        <SelectItem value="evening">Evening</SelectItem>
+                        <SelectItem value="night">Night</SelectItem>
+                    </SelectContent>
+                </Select>
               </div>
-            ))}
+           </div>
 
-            <Button variant="outline" size="sm" onClick={addFoodItem} className="w-full">
-              <Edit3 className="w-4 h-4 mr-2" />
-              Add Another Item
-            </Button>
-
-            {/* Date & Time Selection - Only show for new meals */}
-            {!editMode && (
-              <>
-                <Separator />
-                <div className="space-y-3">
-                  <Label className="text-sm font-medium flex items-center gap-2">
-                    <Calendar className="w-4 h-4" />
-                    Meal Date & Time
-                  </Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <Label htmlFor="meal-date" className="text-xs text-muted-foreground">Date</Label>
-                      <Input
-                        id="meal-date"
-                        type="date"
-                        value={selectedMealDate}
-                        onChange={(e) => setSelectedMealDate(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="time-of-day" className="text-xs text-muted-foreground">Time of Day</Label>
-                      <Select value={selectedTimeOfDay} onValueChange={setSelectedTimeOfDay}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="morning">Morning</SelectItem>
-                          <SelectItem value="noon">Noon</SelectItem>
-                          <SelectItem value="afternoon">Afternoon</SelectItem>
-                          <SelectItem value="evening">Evening</SelectItem>
-                          <SelectItem value="night">Night</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Assumptions Section */}
           {assumptions.length > 0 && (
             <>
               <Separator />
@@ -515,23 +369,17 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
                 <Popover open={showAssumptions} onOpenChange={setShowAssumptions}>
                   <PopoverTrigger asChild>
                     <Button variant="outline" size="sm" className="w-full max-w-xs">
-                      <Info className="w-4 h-4 mr-2" />
-                      Quantity Estimates
+                      <Info className="w-4 h-4 mr-2" /> AI Assumptions
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-80 max-h-[50vh] sm:max-h-60 overflow-y-auto z-50 bg-popover">
+                  <PopoverContent className="w-80 max-h-[50vh] overflow-y-auto">
                     <div className="space-y-2">
-                      <h4 className="text-sm font-medium text-butler-heading">AI Assumptions</h4>
-                      <div className="text-xs text-muted-foreground">
-                        The following estimates were made:
-                      </div>
-                      <div className="space-y-2 max-h-[40vh] sm:max-h-48 overflow-y-auto">
-                        {assumptions.map((assumption, index) => (
-                          <div key={index} className="p-2 bg-muted/50 rounded text-xs">
-                            <strong className="text-primary">{assumption.type}:</strong> {assumption.description}
-                          </div>
-                        ))}
-                      </div>
+                      <h4 className="text-sm font-medium">AI Assumptions</h4>
+                      {assumptions.map((assumption, index) => (
+                        <div key={index} className="text-xs p-2 bg-muted/50 rounded">
+                           <strong className="text-primary">{assumption.type}:</strong> {assumption.description}
+                        </div>
+                      ))}
                     </div>
                   </PopoverContent>
                 </Popover>
@@ -541,42 +389,23 @@ const ConfirmationModal = ({ isOpen, onClose, items, assumptions = [], detectedT
 
           <Separator />
 
-          <div className="sticky bottom-0 left-0 right-0 bg-card/95 supports-[backdrop-filter]:bg-card/80 backdrop-blur border-t border-border pt-2 pb-[env(safe-area-inset-bottom)]">
-            <div className="flex flex-col gap-2">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Button variant="outline" onClick={onClose} disabled={loading} className="w-full sm:flex-1">
-                  Allow me to reconsider
-                </Button>
-                {editMode && (
-                  <Button 
-                    variant="secondary" 
-                    onClick={reanalyzeItems} 
-                    disabled={loading || reanalyzing}
-                    className="w-full sm:flex-1 flex items-center gap-2"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${reanalyzing ? 'animate-spin' : ''}`} />
-                    {reanalyzing ? 'Reanalyzing...' : 'Update Nutrients'}
-                  </Button>
-                )}
-                <Button onClick={handleConfirm} disabled={loading || editItems.some(it => !it.n?.trim())} className="w-full sm:flex-1 btn-butler">
-                  {loading ? (
-                    <>
-                      <div className="animate-spin w-4 h-4 mr-2 border-2 border-primary-foreground border-t-transparent rounded-full"></div>
-                      {editMode ? "Updating..." : "Saving..."}
-                    </>
-                  ) : (
-                    <>
-                      <Check className="w-4 h-4 mr-2" />
-                      {editMode ? "Update Meal" : "Confirm & Record"}
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button variant="outline" onClick={onClose} disabled={loading} className="w-full">Cancel</Button>
+            <Button onClick={handleConfirm} disabled={loading || editItems.length === 0} className="w-full btn-butler">
+              {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Check className="w-4 h-4 mr-2" />}
+              {editMode ? "Update Meal" : "Confirm & Record"}
+            </Button>
           </div>
         </div>
       </DialogContent>
     </Dialog>
+
+    <RecordingModal
+      isOpen={isRecordingNewItem}
+      onClose={() => setIsRecordingNewItem(false)}
+      onRecordingComplete={handleAddNewItems}
+    />
+  </>
   );
 };
 
