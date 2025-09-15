@@ -43,23 +43,28 @@ const HistoryPage = () => {
   const [showAddMealModal, setShowAddMealModal] = useState(false);
   const { toast } = useToast();
 
-  const loadMealsForDate = async (date: Date) => {
+  const loadDataForDate = async (date: Date) => {
     if (!user) return;
-    
+    setLoading(true);
     try {
-      const dateStr = date.toISOString().split('T')[0];
-      
-      const { data: meals, error } = await supabase
-        .from('meals')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('logged_date', dateStr)
-        .order('logged_at', { ascending: false });
+        const dateStr = date.toISOString().split('T')[0];
+        
+        const { data: mealsData, error } = await supabase
+            .from('meals')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('logged_date', dateStr)
+            .order('logged_at', { ascending: false });
 
-      if (error) throw error;
-      setMeals(meals || []);
+        if (error) throw error;
+        setMeals(mealsData || []);
+        
+        // Also refresh the summary data in the background
+        loadHistorySummary();
     } catch (error) {
-      console.error('Error loading meals:', error);
+        console.error('Error loading meals:', error);
+    } finally {
+        setLoading(false);
     }
   };
 
@@ -67,7 +72,6 @@ const HistoryPage = () => {
     if (!user) return;
     
     try {
-      // Get last 30 days of data
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       const dateStr = thirtyDaysAgo.toISOString().split('T')[0];
@@ -81,20 +85,12 @@ const HistoryPage = () => {
 
       if (error) throw error;
 
-      // Group by date and calculate summaries
       const summaryMap = new Map<string, DaySummary>();
       
       meals?.forEach(meal => {
         const date = meal.logged_date;
         if (!summaryMap.has(date)) {
-          summaryMap.set(date, {
-            date,
-            calories: 0,
-            protein: 0,
-            carbs: 0,
-            fat: 0,
-            mealCount: 0
-          });
+          summaryMap.set(date, { date, calories: 0, protein: 0, carbs: 0, fat: 0, mealCount: 0 });
         }
         
         const summary = summaryMap.get(date)!;
@@ -112,16 +108,9 @@ const HistoryPage = () => {
   };
 
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      await Promise.all([
-        loadMealsForDate(selectedDate),
-        loadHistorySummary()
-      ]);
-      setLoading(false);
-    };
-    
-    loadData();
+    if (user) {
+        loadDataForDate(selectedDate);
+    }
   }, [user, selectedDate]);
 
   const getDateSummary = (date: Date) => {
@@ -129,27 +118,20 @@ const HistoryPage = () => {
     return daySummaries.find(summary => summary.date === dateStr);
   };
 
-  const hasDataForDate = (date: Date) => {
-    return !!getDateSummary(date);
-  };
+  const hasDataForDate = (date: Date) => !!getDateSummary(date);
 
   const selectedDateSummary = getDateSummary(selectedDate);
 
-  const handleAddMeal = () => {
-    setShowAddMealModal(true);
-  };
-
-  const handleMealAdded = () => {
+  const handleAddMealConfirmed = async () => {
     setShowAddMealModal(false);
-    loadMealsForDate(selectedDate);
-    loadHistorySummary();
+    await loadDataForDate(selectedDate); // Refresh data for the current date
     toast({
-      title: "Meal added",
-      description: "Your meal has been recorded successfully."
+      title: "Meal recorded with distinction",
+      description: `Your entry for ${format(selectedDate, 'MMMM d')} has been logged.`
     });
   };
 
-  if (loading) {
+  if (loading && !daySummaries.length) { // Show loader only on initial load
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-butler-parchment">
         <div className="text-center">
@@ -162,9 +144,9 @@ const HistoryPage = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-butler-parchment">
-      <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm">
+      <header className="sticky top-0 z-20 border-b border-border/50 bg-card/80 backdrop-blur-sm">
         <div className="container mx-auto px-4 py-4 flex items-center gap-4">
-          <Button variant="ghost" onClick={() => navigate('/')} className="hover-elevate">
+          <Button variant="ghost" onClick={() => navigate('/')}>
             <ArrowLeft className="w-4 h-4 mr-2" />
             Return to Dashboard
           </Button>
@@ -185,19 +167,14 @@ const HistoryPage = () => {
                   <CalendarIcon className="w-5 h-5" />
                   Select Date
                 </CardTitle>
-                <CardDescription>
-                  Choose a date to review your entries
-                </CardDescription>
               </CardHeader>
               <CardContent>
                 <Calendar
                   mode="single"
                   selected={selectedDate}
                   onSelect={(date) => date && setSelectedDate(date)}
-                  className="rounded-md border-0"
-                  modifiers={{
-                    hasData: (date) => hasDataForDate(date)
-                  }}
+                  className="rounded-md border-0 p-0"
+                  modifiers={{ hasData: hasDataForDate }}
                   modifiersStyles={{
                     hasData: { 
                       backgroundColor: 'hsl(var(--primary) / 0.1)',
@@ -222,52 +199,45 @@ const HistoryPage = () => {
               {/* Date Summary */}
               <Card className="card-butler">
                 <CardHeader>
-                  <CardTitle className="text-butler-heading">
-                    {format(selectedDate, 'EEEE, MMMM d, yyyy')}
-                  </CardTitle>
-                  <CardDescription className="flex items-center justify-between">
-                    <span>
-                      {selectedDateSummary 
-                        ? `${selectedDateSummary.mealCount} meal${selectedDateSummary.mealCount !== 1 ? 's' : ''} recorded`
-                        : "No entries recorded for this date"
-                      }
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleAddMeal}
-                      className="h-8 px-2 text-primary hover:bg-primary/10"
-                    >
-                      <Plus className="w-4 h-4 mr-1" />
-                      Add Meal
-                    </Button>
-                  </CardDescription>
+                  <div className="flex justify-between items-start">
+                    <div>
+                       <CardTitle className="text-butler-heading">
+                        {format(selectedDate, 'EEEE, MMMM d, yyyy')}
+                       </CardTitle>
+                       <CardDescription>
+                          {selectedDateSummary 
+                            ? `${selectedDateSummary.mealCount} meal${selectedDateSummary.mealCount !== 1 ? 's' : ''} recorded`
+                            : "No entries recorded for this date"
+                          }
+                       </CardDescription>
+                    </div>
+                     <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowAddMealModal(true)}
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Log a Meal
+                      </Button>
+                  </div>
                 </CardHeader>
                 {selectedDateSummary && (
                   <CardContent>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="text-center p-3 bg-primary/5 rounded-lg">
-                        <div className="text-2xl font-bold text-primary">
-                          {Math.round(selectedDateSummary.calories)}
-                        </div>
+                        <div className="text-2xl font-bold text-primary">{Math.round(selectedDateSummary.calories)}</div>
                         <div className="text-xs text-muted-foreground">Calories</div>
                       </div>
                       <div className="text-center p-3 bg-chart-1/10 rounded-lg">
-                        <div className="text-2xl font-bold text-chart-1">
-                          {Math.round(selectedDateSummary.protein)}g
-                        </div>
+                        <div className="text-2xl font-bold text-chart-1">{Math.round(selectedDateSummary.protein)}g</div>
                         <div className="text-xs text-muted-foreground">Protein</div>
                       </div>
                       <div className="text-center p-3 bg-chart-2/10 rounded-lg">
-                        <div className="text-2xl font-bold text-chart-2">
-                          {Math.round(selectedDateSummary.carbs)}g
-                        </div>
+                        <div className="text-2xl font-bold text-chart-2">{Math.round(selectedDateSummary.carbs)}g</div>
                         <div className="text-xs text-muted-foreground">Carbs</div>
                       </div>
                       <div className="text-center p-3 bg-chart-3/10 rounded-lg">
-                        <div className="text-2xl font-bold text-chart-3">
-                          {Math.round(selectedDateSummary.fat)}g
-                        </div>
+                        <div className="text-2xl font-bold text-chart-3">{Math.round(selectedDateSummary.fat)}g</div>
                         <div className="text-xs text-muted-foreground">Fat</div>
                       </div>
                     </div>
@@ -283,48 +253,28 @@ const HistoryPage = () => {
                   </h2>
                   <div className="grid grid-cols-1 gap-4">
                     {meals.map((meal) => (
-                      <MealCard key={meal.id} meal={meal} onMealUpdated={() => loadMealsForDate(selectedDate)} />
+                      <MealCard key={meal.id} meal={meal} onMealUpdated={() => loadDataForDate(selectedDate)} />
                     ))}
                   </div>
                 </div>
-              ) : selectedDateSummary ? (
-                <Card className="card-butler">
-                  <CardContent className="text-center py-8">
-                    <p className="text-muted-foreground">
-                      No detailed meal records found for this date.
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <Card className="card-butler">
-                  <CardContent className="text-center py-8">
-                    <p className="text-muted-foreground">
-                      No meals were recorded on this date.
-                    </p>
-                    <Button
-                      onClick={handleAddMeal}
-                      variant="outline"
-                      className="mt-4"
-                    >
-                      <Plus className="w-4 h-4 mr-2" />
-                      Add a meal for this date
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
       </main>
 
       {/* Add Meal Modal */}
-      <ConfirmationModal
-        isOpen={showAddMealModal}
-        onClose={() => setShowAddMealModal(false)}
-        items={[{ qty: '1 serving', n: '' }]}
-        onConfirm={handleMealAdded}
-        selectedDate={selectedDate}
-      />
+      {showAddMealModal && (
+         <ConfirmationModal
+          isOpen={showAddMealModal}
+          onClose={() => setShowAddMealModal(false)}
+          onConfirm={handleAddMealConfirmed}
+          // We pass an empty items array so the user starts fresh
+          items={[]} 
+          // Pass the selected date to pre-fill it in the modal
+          detectedTime={selectedDate.toISOString()}
+        />
+      )}
     </div>
   );
 };
